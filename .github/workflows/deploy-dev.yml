@@ -10,6 +10,7 @@ permissions:
 
 jobs:
   deploy:
+    if: ${{ vars.AWS_ROLE_ARN != '' && vars.AUTH_ADMIN_CONFIG_JSON_BASE64 != '' && vars.COGNITO_USER_POOL_ARNS != '' }}
     runs-on: ubuntu-latest
     environment: dev
     steps:

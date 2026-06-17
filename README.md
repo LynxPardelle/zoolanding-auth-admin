@@ -96,4 +96,6 @@ Required GitHub Environment variables:
 - `AUTH_ADMIN_CONFIG_JSON_BASE64`
 - `COGNITO_USER_POOL_ARNS`, comma-delimited allowlist for IAM-scoped Cognito admin actions
 
+Deploy jobs are skipped until `AWS_ROLE_ARN`, `AUTH_ADMIN_CONFIG_JSON_BASE64`, and `COGNITO_USER_POOL_ARNS` are present in the target GitHub Environment. CI still runs without those variables.
+
 Front-door routing should expose these endpoints as same-origin `/auth/session/*` and `/auth/admin/*`. Do not expose wildcard `/auth/*` in a way that steals draft-rendered pages such as `/auth/callback`.
