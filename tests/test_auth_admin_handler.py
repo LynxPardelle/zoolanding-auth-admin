@@ -1,0 +1,681 @@
+import base64
+import json
+import os
+import unittest
+from unittest.mock import patch
+
+import lambda_function as auth_admin
+
+
+def encoded_config(**profile_overrides):
+    profile = {
+        "enabled": True,
+        "environment": "test",
+        "domain": "zoositioweb.com.mx",
+        "authProfileId": "staff",
+        "provider": "cognito",
+        "issuer": "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_pool",
+        "userPoolId": "us-east-1_pool",
+        "clientId": "public-client-id",
+        "audiences": ["public-client-id"],
+        "tenantId": "zoosite",
+        "tenantClaim": "custom:tenant_id",
+        "environmentClaim": "custom:zoolanding_env",
+        "groupClaim": "cognito:groups",
+        "allowedGroups": ["zoosite-client", "zoosite-admin"],
+        "adminGroups": ["zoosite-admin"],
+        "defaultUserStatus": "pending",
+        "adminGroupsAutoApproved": True,
+        "manageableGroups": ["zoosite-client", "zoosite-admin"],
+        "customAuth": {
+            "signin": {"enabled": True}
+        },
+    }
+    profile.update(profile_overrides)
+    raw = json.dumps({"version": 1, "profiles": [profile]}, separators=(",", ":")).encode("utf-8")
+    return base64.b64encode(raw).decode("ascii")
+
+
+def http_event(method, path, body=None, headers=None, cookies=None, auth_context=True):
+    request_headers = {}
+    if auth_context:
+        request_headers.update({
+            "x-zlp-domain": "zoositioweb.com.mx",
+            "x-zlp-auth-profile-id": "staff",
+        })
+    request_headers.update(headers or {})
+    return {
+        "version": "2.0",
+        "routeKey": f"{method} {path}",
+        "rawPath": path,
+        "headers": request_headers,
+        "cookies": cookies or [],
+        "requestContext": {
+            "http": {
+                "method": method,
+                "path": path,
+            },
+            "requestId": "request-1",
+        },
+        "body": json.dumps(body) if body is not None else None,
+    }
+
+
+def body(response):
+    return json.loads(response.get("body") or "{}")
+
+
+class FakeCognito:
+    def __init__(self, groups_by_username=None):
+        self.calls = []
+        self.groups_by_username = groups_by_username or {}
+
+    def initiate_auth(self, **kwargs):
+        self.calls.append(("initiate_auth", kwargs))
+        return {
+            "AuthenticationResult": {
+                "IdToken": "valid-id-token"
+            }
+        }
+
+    def admin_list_groups_for_user(self, **kwargs):
+        self.calls.append(("admin_list_groups_for_user", kwargs))
+        groups = self.groups_by_username.get(kwargs["Username"], [])
+        return {"Groups": [{"GroupName": group} for group in groups]}
+
+    def admin_add_user_to_group(self, **kwargs):
+        self.calls.append(("admin_add_user_to_group", kwargs))
+        return {}
+
+    def admin_remove_user_from_group(self, **kwargs):
+        self.calls.append(("admin_remove_user_from_group", kwargs))
+        return {}
+
+    def admin_disable_user(self, **kwargs):
+        self.calls.append(("admin_disable_user", kwargs))
+        return {}
+
+    def admin_enable_user(self, **kwargs):
+        self.calls.append(("admin_enable_user", kwargs))
+        return {}
+
+
+class FakeDynamo:
+    def __init__(self):
+        self.sessions = {}
+        self.users = {}
+        self.audit = []
+        self.calls = []
+
+    def put_session(self, item):
+        self.calls.append(("put_session", item))
+        self.sessions[item["sessionIdHash"]] = dict(item)
+
+    def get_session(self, session_id_hash):
+        self.calls.append(("get_session", session_id_hash))
+        item = self.sessions.get(session_id_hash)
+        return dict(item) if item else None
+
+    def revoke_session(self, session_id_hash, revoked_at):
+        self.calls.append(("revoke_session", session_id_hash, revoked_at))
+        if session_id_hash in self.sessions:
+            self.sessions[session_id_hash]["revokedAt"] = revoked_at
+
+    def put_user_if_absent(self, key, item):
+        self.calls.append(("put_user_if_absent", key, item))
+        self.users.setdefault(key, dict(item))
+        return dict(self.users[key])
+
+    def get_user(self, key):
+        self.calls.append(("get_user", key))
+        item = self.users.get(key)
+        return dict(item) if item else None
+
+    def list_users(self, tenant_profile_key):
+        self.calls.append(("list_users", tenant_profile_key))
+        return [
+            dict(item)
+            for key, item in self.users.items()
+            if key[0] == tenant_profile_key
+        ]
+
+    def update_user(self, key, updates):
+        self.calls.append(("update_user", key, updates))
+        current = dict(self.users.get(key, {}))
+        current.update(updates)
+        self.users[key] = current
+        return dict(current)
+
+    def write_audit(self, item):
+        self.calls.append(("write_audit", item))
+        self.audit.append(dict(item))
+
+
+class AuthAdminHandlerTests(unittest.TestCase):
+    def run_with_fakes(self, event, *, claims=None, fake_dynamo=None, fake_cognito=None, env=None):
+        fake_dynamo = fake_dynamo or FakeDynamo()
+        fake_cognito = fake_cognito or FakeCognito()
+        claims = claims or {
+            "sub": "client-sub",
+            "email": "client@example.test",
+            "iss": "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_pool",
+            "aud": "public-client-id",
+            "token_use": "id",
+            "custom:tenant_id": "zoosite",
+            "custom:zoolanding_env": "test",
+            "cognito:groups": ["zoosite-client"],
+            "exp": 4102444800,
+        }
+        environment = {
+            "AUTH_ADMIN_CONFIG_JSON_BASE64": encoded_config(),
+            "AUTH_ADMIN_ENVIRONMENT": "test",
+            "LOG_LEVEL": "ERROR",
+        }
+        environment.update(env or {})
+        with patch.dict(os.environ, environment, clear=True), \
+                patch.object(auth_admin, "_cognito_client", return_value=fake_cognito), \
+                patch.object(auth_admin, "_session_store", return_value=fake_dynamo), \
+                patch.object(auth_admin, "_verify_jwt", return_value=claims), \
+                patch.object(auth_admin, "_random_urlsafe", side_effect=["session-value", "csrf-value"]), \
+                patch.object(auth_admin, "_now_epoch", return_value=1_800_000_000):
+            response = auth_admin.lambda_handler(event, object())
+        return response, fake_dynamo, fake_cognito
+
+    def sign_in(self, *, claims=None, env=None):
+        response, fake_dynamo, fake_cognito = self.run_with_fakes(http_event("POST", "/auth/session/signin", {
+            "domain": "zoositioweb.com.mx",
+            "authProfileId": "staff",
+            "email": "client@example.test",
+            "password": "ValidPass123!",
+            "language": "es",
+        }), claims=claims, env=env)
+        self.assertEqual(response["statusCode"], 200)
+        cookies = response.get("cookies") or []
+        session_cookie = next(cookie for cookie in cookies if cookie.startswith("__Host-zlp_session="))
+        csrf_cookie = next(cookie for cookie in cookies if not cookie.startswith("__Host-zlp_session="))
+        session_value = session_cookie.split(";", 1)[0].split("=", 1)[1]
+        csrf_value = csrf_cookie.split(";", 1)[0].split("=", 1)[1]
+        return response, fake_dynamo, fake_cognito, session_value, csrf_value
+
+    def test_config_rejects_secret_like_keys(self):
+        with patch.dict(os.environ, {
+            "AUTH_ADMIN_CONFIG_JSON_BASE64": encoded_config(clientSecret="blocked"),
+        }, clear=True):
+            with self.assertRaises(auth_admin.AuthAdminConfigError):
+                auth_admin.load_config()
+
+    def test_signin_creates_private_session_and_safe_cookies(self):
+        response, fake_dynamo, fake_cognito, _, _ = self.sign_in()
+
+        response_body = body(response)
+        self.assertEqual(response_body["status"], "signed-in")
+        self.assertEqual(response_body["session"]["profile"]["subject"], "client-sub")
+        self.assertEqual(response_body["session"]["profile"]["roles"], ["zoosite-client"])
+        self.assertEqual(response_body["session"]["profile"]["approvalStatus"], "pending")
+        self.assertNotIn("valid-id-token", json.dumps(response_body))
+        self.assertEqual([call[0] for call in fake_cognito.calls], ["initiate_auth"])
+        self.assertEqual(len(fake_dynamo.sessions), 1)
+
+        cookies = "\n".join(response.get("cookies") or [])
+        self.assertIn("__Host-zlp_session=session-value; HttpOnly; Secure; SameSite=Lax; Path=/", cookies)
+        self.assertIn("zlp_csrf=csrf-value; Secure; SameSite=Lax; Path=/", cookies)
+
+    def test_me_returns_sanitized_account_for_pending_user(self):
+        _, fake_dynamo, _, session_value, _ = self.sign_in()
+
+        response, _, _ = self.run_with_fakes(
+            http_event("GET", "/auth/session/me", cookies=[f"__Host-zlp_session={session_value}"]),
+            fake_dynamo=fake_dynamo,
+        )
+
+        self.assertEqual(response["statusCode"], 200)
+        account = body(response)["account"]
+        self.assertEqual(account["subject"], "client-sub")
+        self.assertEqual(account["approvalStatus"], "pending")
+        self.assertEqual(account["roles"], ["zoosite-client"])
+        self.assertNotIn("sessionIdHash", json.dumps(account))
+        self.assertNotIn("tenantId", json.dumps(account))
+
+    def test_session_request_requires_matching_draft_context(self):
+        _, fake_dynamo, _, session_value, _ = self.sign_in()
+
+        response, _, _ = self.run_with_fakes(
+            http_event(
+                "GET",
+                "/auth/session/me",
+                headers={"x-zlp-domain": "otherdraft.example"},
+                cookies=[f"__Host-zlp_session={session_value}"],
+            ),
+            fake_dynamo=fake_dynamo,
+        )
+
+        self.assertEqual(response["statusCode"], 401)
+
+    def test_admin_users_requires_approved_admin(self):
+        _, fake_dynamo, _, session_value, _ = self.sign_in()
+
+        response, _, _ = self.run_with_fakes(
+            http_event("GET", "/auth/admin/users", cookies=[f"__Host-zlp_session={session_value}"]),
+            fake_dynamo=fake_dynamo,
+        )
+
+        self.assertEqual(response["statusCode"], 403)
+        self.assertEqual(body(response)["error"], "Admin access required")
+
+    def test_approved_admin_can_list_users(self):
+        admin_claims = {
+            "sub": "admin-sub",
+            "email": "admin@example.test",
+            "iss": "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_pool",
+            "aud": "public-client-id",
+            "token_use": "id",
+            "custom:tenant_id": "zoosite",
+            "custom:zoolanding_env": "test",
+            "cognito:groups": ["zoosite-admin"],
+            "exp": 4102444800,
+        }
+        _, fake_dynamo, _, session_value, _ = self.sign_in(claims=admin_claims)
+        tenant_key = "zoositioweb.com.mx#staff#test"
+        fake_dynamo.users[(tenant_key, "USER#client-sub")] = {
+            "tenantProfileKey": tenant_key,
+            "subject": "client-sub",
+            "email": "client@example.test",
+            "roles": ["zoosite-client"],
+            "approvalStatus": "pending",
+            "enabled": True,
+        }
+
+        response, _, _ = self.run_with_fakes(
+            http_event("GET", "/auth/admin/users", cookies=[f"__Host-zlp_session={session_value}"]),
+            fake_dynamo=fake_dynamo,
+        )
+
+        self.assertEqual(response["statusCode"], 200)
+        users = body(response)["users"]
+        self.assertEqual([user["subject"] for user in users], ["admin-sub", "client-sub"])
+        self.assertNotIn("emailHash", json.dumps(users))
+
+    def test_existing_admin_session_is_rejected_after_admin_is_suspended(self):
+        admin_claims = {
+            "sub": "admin-sub",
+            "email": "admin@example.test",
+            "iss": "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_pool",
+            "aud": "public-client-id",
+            "token_use": "id",
+            "custom:tenant_id": "zoosite",
+            "custom:zoolanding_env": "test",
+            "cognito:groups": ["zoosite-admin"],
+            "exp": 4102444800,
+        }
+        _, fake_dynamo, _, session_value, _ = self.sign_in(claims=admin_claims)
+        tenant_key = "zoositioweb.com.mx#staff#test"
+        fake_dynamo.users[(tenant_key, "USER#admin-sub")].update({
+            "approvalStatus": "suspended",
+            "enabled": False,
+        })
+
+        response, _, _ = self.run_with_fakes(
+            http_event("GET", "/auth/admin/users", cookies=[f"__Host-zlp_session={session_value}"]),
+            fake_dynamo=fake_dynamo,
+        )
+
+        self.assertEqual(response["statusCode"], 403)
+
+    def test_existing_admin_session_is_rejected_after_admin_group_removed(self):
+        admin_claims = {
+            "sub": "admin-sub",
+            "email": "admin@example.test",
+            "iss": "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_pool",
+            "aud": "public-client-id",
+            "token_use": "id",
+            "custom:tenant_id": "zoosite",
+            "custom:zoolanding_env": "test",
+            "cognito:groups": ["zoosite-admin"],
+            "exp": 4102444800,
+        }
+        _, fake_dynamo, _, session_value, _ = self.sign_in(claims=admin_claims)
+        tenant_key = "zoositioweb.com.mx#staff#test"
+        fake_dynamo.users[(tenant_key, "USER#admin-sub")].update({
+            "roles": ["zoosite-client"],
+            "approvalStatus": "approved",
+            "enabled": True,
+        })
+
+        response, _, _ = self.run_with_fakes(
+            http_event("GET", "/auth/admin/users", cookies=[f"__Host-zlp_session={session_value}"]),
+            fake_dynamo=fake_dynamo,
+        )
+
+        self.assertEqual(response["statusCode"], 403)
+
+    def test_approve_user_requires_csrf_and_blocks_self_approval(self):
+        admin_claims = {
+            "sub": "admin-sub",
+            "email": "admin@example.test",
+            "iss": "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_pool",
+            "aud": "public-client-id",
+            "token_use": "id",
+            "custom:tenant_id": "zoosite",
+            "custom:zoolanding_env": "test",
+            "cognito:groups": ["zoosite-admin"],
+            "exp": 4102444800,
+        }
+        _, fake_dynamo, _, session_value, csrf_value = self.sign_in(claims=admin_claims)
+
+        missing_csrf_response, _, _ = self.run_with_fakes(
+            http_event("POST", "/auth/admin/users/client-sub/approve", cookies=[f"__Host-zlp_session={session_value}"]),
+            fake_dynamo=fake_dynamo,
+        )
+        self.assertEqual(missing_csrf_response["statusCode"], 403)
+
+        self_response, _, _ = self.run_with_fakes(
+            http_event(
+                "POST",
+                "/auth/admin/users/admin-sub/approve",
+                headers={"x-zlp-csrf": csrf_value},
+                cookies=[f"__Host-zlp_session={session_value}", f"zlp_csrf={csrf_value}"],
+            ),
+            fake_dynamo=fake_dynamo,
+        )
+        self.assertEqual(self_response["statusCode"], 400)
+        self.assertEqual(body(self_response)["error"], "Users cannot approve themselves")
+
+    def test_csrf_names_can_be_profile_configured(self):
+        admin_claims = {
+            "sub": "admin-sub",
+            "email": "admin@example.test",
+            "iss": "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_pool",
+            "aud": "public-client-id",
+            "token_use": "id",
+            "custom:tenant_id": "zoosite",
+            "custom:zoolanding_env": "test",
+            "cognito:groups": ["zoosite-admin"],
+            "exp": 4102444800,
+        }
+        env = {
+            "AUTH_ADMIN_CONFIG_JSON_BASE64": encoded_config(session={
+                "csrfCookieName": "zoosite_csrf",
+                "csrfHeaderName": "X-Zoosite-CSRF",
+            })
+        }
+        response, fake_dynamo, _, session_value, csrf_value = self.sign_in(claims=admin_claims, env=env)
+        self.assertIn("zoosite_csrf=csrf-value", "\n".join(response.get("cookies") or []))
+        tenant_key = "zoositioweb.com.mx#staff#test"
+        fake_dynamo.users[(tenant_key, "USER#client-sub")] = {
+            "tenantProfileKey": tenant_key,
+            "subject": "client-sub",
+            "username": "client@example.test",
+            "email": "client@example.test",
+            "roles": ["zoosite-client"],
+            "approvalStatus": "pending",
+            "enabled": True,
+        }
+
+        approved, _, _ = self.run_with_fakes(
+            http_event(
+                "POST",
+                "/auth/admin/users/client-sub/approve",
+                body={"groups": ["zoosite-client"]},
+                headers={"X-Zoosite-CSRF": csrf_value},
+                cookies=[f"__Host-zlp_session={session_value}", f"zoosite_csrf={csrf_value}"],
+            ),
+            fake_dynamo=fake_dynamo,
+            env=env,
+        )
+
+        self.assertEqual(approved["statusCode"], 200)
+
+    def test_approve_user_updates_status_groups_and_audit(self):
+        admin_claims = {
+            "sub": "admin-sub",
+            "email": "admin@example.test",
+            "iss": "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_pool",
+            "aud": "public-client-id",
+            "token_use": "id",
+            "custom:tenant_id": "zoosite",
+            "custom:zoolanding_env": "test",
+            "cognito:groups": ["zoosite-admin"],
+            "exp": 4102444800,
+        }
+        _, fake_dynamo, fake_cognito, session_value, csrf_value = self.sign_in(claims=admin_claims)
+        tenant_key = "zoositioweb.com.mx#staff#test"
+        fake_dynamo.users[(tenant_key, "USER#client-sub")] = {
+            "tenantProfileKey": tenant_key,
+            "subject": "client-sub",
+            "username": "client@example.test",
+            "email": "client@example.test",
+            "roles": ["zoosite-client"],
+            "approvalStatus": "pending",
+            "enabled": True,
+        }
+
+        response, _, _ = self.run_with_fakes(
+            http_event(
+                "POST",
+                "/auth/admin/users/client-sub/approve",
+                body={"groups": ["zoosite-client", "zoosite-admin"]},
+                headers={"x-zlp-csrf": csrf_value},
+                cookies=[f"__Host-zlp_session={session_value}", f"zlp_csrf={csrf_value}"],
+            ),
+            fake_dynamo=fake_dynamo,
+            fake_cognito=fake_cognito,
+        )
+
+        self.assertEqual(response["statusCode"], 200)
+        updated = body(response)["user"]
+        self.assertEqual(updated["approvalStatus"], "approved")
+        self.assertEqual(updated["roles"], ["zoosite-client", "zoosite-admin"])
+        self.assertIn(("admin_add_user_to_group", {
+            "UserPoolId": "us-east-1_pool",
+            "Username": "client@example.test",
+            "GroupName": "zoosite-admin",
+        }), fake_cognito.calls)
+        self.assertEqual(fake_dynamo.audit[-1]["eventType"], "user-approved")
+        self.assertEqual(fake_dynamo.audit[-1]["actorSubject"], "admin-sub")
+
+    def test_signin_rejects_environment_mismatch_claims(self):
+        claims = {
+            "sub": "client-sub",
+            "email": "client@example.test",
+            "iss": "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_pool",
+            "aud": "public-client-id",
+            "token_use": "id",
+            "custom:tenant_id": "zoosite",
+            "custom:zoolanding_env": "prod",
+            "cognito:groups": ["zoosite-client"],
+            "exp": 4102444800,
+        }
+
+        response, _, _ = self.run_with_fakes(http_event("POST", "/auth/session/signin", {
+            "domain": "zoositioweb.com.mx",
+            "authProfileId": "staff",
+            "email": "client@example.test",
+            "password": "ValidPass123!",
+        }), claims=claims)
+
+        self.assertEqual(response["statusCode"], 401)
+        self.assertEqual(body(response)["error"], "Sign-in failed")
+
+    def test_signin_rejects_non_id_token_claims(self):
+        claims = {
+            "sub": "client-sub",
+            "email": "client@example.test",
+            "iss": "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_pool",
+            "aud": "public-client-id",
+            "token_use": "access",
+            "custom:tenant_id": "zoosite",
+            "custom:zoolanding_env": "test",
+            "cognito:groups": ["zoosite-client"],
+            "exp": 4102444800,
+        }
+
+        response, _, _ = self.run_with_fakes(http_event("POST", "/auth/session/signin", {
+            "domain": "zoositioweb.com.mx",
+            "authProfileId": "staff",
+            "email": "client@example.test",
+            "password": "ValidPass123!",
+        }), claims=claims)
+
+        self.assertEqual(response["statusCode"], 401)
+        self.assertEqual(body(response)["error"], "Sign-in failed")
+
+    def test_group_updates_reject_non_manageable_groups(self):
+        admin_claims = {
+            "sub": "admin-sub",
+            "email": "admin@example.test",
+            "iss": "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_pool",
+            "aud": "public-client-id",
+            "token_use": "id",
+            "custom:tenant_id": "zoosite",
+            "custom:zoolanding_env": "test",
+            "cognito:groups": ["zoosite-admin"],
+            "exp": 4102444800,
+        }
+        _, fake_dynamo, _, session_value, csrf_value = self.sign_in(claims=admin_claims)
+        tenant_key = "zoositioweb.com.mx#staff#test"
+        fake_dynamo.users[(tenant_key, "USER#client-sub")] = {
+            "tenantProfileKey": tenant_key,
+            "subject": "client-sub",
+            "username": "client@example.test",
+            "email": "client@example.test",
+            "roles": ["zoosite-client"],
+            "approvalStatus": "pending",
+            "enabled": True,
+        }
+
+        response, _, _ = self.run_with_fakes(
+            http_event(
+                "POST",
+                "/auth/admin/users/client-sub/groups",
+                body={"groups": ["zoosite-owner"]},
+                headers={"x-zlp-csrf": csrf_value},
+                cookies=[f"__Host-zlp_session={session_value}", f"zlp_csrf={csrf_value}"],
+            ),
+            fake_dynamo=fake_dynamo,
+        )
+
+        self.assertEqual(response["statusCode"], 400)
+        self.assertEqual(body(response)["error"], "Requested groups are not manageable")
+
+    def test_group_updates_use_cognito_groups_as_source_of_truth(self):
+        admin_claims = {
+            "sub": "admin-sub",
+            "email": "admin@example.test",
+            "iss": "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_pool",
+            "aud": "public-client-id",
+            "token_use": "id",
+            "custom:tenant_id": "zoosite",
+            "custom:zoolanding_env": "test",
+            "cognito:groups": ["zoosite-admin"],
+            "exp": 4102444800,
+        }
+        _, fake_dynamo, _, session_value, csrf_value = self.sign_in(claims=admin_claims)
+        tenant_key = "zoositioweb.com.mx#staff#test"
+        fake_dynamo.users[(tenant_key, "USER#client-sub")] = {
+            "tenantProfileKey": tenant_key,
+            "subject": "client-sub",
+            "username": "client@example.test",
+            "email": "client@example.test",
+            "roles": ["zoosite-client"],
+            "approvalStatus": "approved",
+            "enabled": True,
+        }
+        fake_cognito = FakeCognito(groups_by_username={
+            "client@example.test": ["zoosite-client", "zoosite-admin"],
+        })
+
+        response, _, _ = self.run_with_fakes(
+            http_event(
+                "POST",
+                "/auth/admin/users/client-sub/groups",
+                body={"groups": ["zoosite-client"]},
+                headers={"x-zlp-csrf": csrf_value},
+                cookies=[f"__Host-zlp_session={session_value}", f"zlp_csrf={csrf_value}"],
+            ),
+            fake_dynamo=fake_dynamo,
+            fake_cognito=fake_cognito,
+        )
+
+        self.assertEqual(response["statusCode"], 200)
+        self.assertIn(("admin_list_groups_for_user", {
+            "UserPoolId": "us-east-1_pool",
+            "Username": "client@example.test",
+        }), fake_cognito.calls)
+        self.assertIn(("admin_remove_user_from_group", {
+            "UserPoolId": "us-east-1_pool",
+            "Username": "client@example.test",
+            "GroupName": "zoosite-admin",
+        }), fake_cognito.calls)
+
+    def test_suspend_and_reactivate_user_write_audit(self):
+        admin_claims = {
+            "sub": "admin-sub",
+            "email": "admin@example.test",
+            "iss": "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_pool",
+            "aud": "public-client-id",
+            "token_use": "id",
+            "custom:tenant_id": "zoosite",
+            "custom:zoolanding_env": "test",
+            "cognito:groups": ["zoosite-admin"],
+            "exp": 4102444800,
+        }
+        _, fake_dynamo, fake_cognito, session_value, csrf_value = self.sign_in(claims=admin_claims)
+        tenant_key = "zoositioweb.com.mx#staff#test"
+        fake_dynamo.users[(tenant_key, "USER#client-sub")] = {
+            "tenantProfileKey": tenant_key,
+            "subject": "client-sub",
+            "username": "client@example.test",
+            "email": "client@example.test",
+            "roles": ["zoosite-client"],
+            "approvalStatus": "approved",
+            "enabled": True,
+        }
+        cookies = [f"__Host-zlp_session={session_value}", f"zlp_csrf={csrf_value}"]
+        headers = {"x-zlp-csrf": csrf_value}
+
+        suspend_response, _, _ = self.run_with_fakes(
+            http_event("POST", "/auth/admin/users/client-sub/suspend", headers=headers, cookies=cookies),
+            fake_dynamo=fake_dynamo,
+            fake_cognito=fake_cognito,
+        )
+        reactivate_response, _, _ = self.run_with_fakes(
+            http_event("POST", "/auth/admin/users/client-sub/reactivate", headers=headers, cookies=cookies),
+            fake_dynamo=fake_dynamo,
+            fake_cognito=fake_cognito,
+        )
+
+        self.assertEqual(suspend_response["statusCode"], 200)
+        self.assertEqual(reactivate_response["statusCode"], 200)
+        self.assertIn(("admin_disable_user", {
+            "UserPoolId": "us-east-1_pool",
+            "Username": "client@example.test",
+        }), fake_cognito.calls)
+        self.assertIn(("admin_enable_user", {
+            "UserPoolId": "us-east-1_pool",
+            "Username": "client@example.test",
+        }), fake_cognito.calls)
+        self.assertEqual([entry["eventType"] for entry in fake_dynamo.audit[-2:]], [
+            "user-suspended",
+            "user-reactivated",
+        ])
+
+    def test_logout_revokes_session_and_clears_cookies(self):
+        _, fake_dynamo, _, session_value, csrf_value = self.sign_in()
+
+        response, _, _ = self.run_with_fakes(
+            http_event(
+                "POST",
+                "/auth/session/logout",
+                headers={"x-zlp-csrf": csrf_value},
+                cookies=[f"__Host-zlp_session={session_value}", f"zlp_csrf={csrf_value}"],
+            ),
+            fake_dynamo=fake_dynamo,
+        )
+
+        self.assertEqual(response["statusCode"], 200)
+        self.assertEqual(body(response)["status"], "signed-out")
+        self.assertIn("Max-Age=0", "\n".join(response.get("cookies") or []))
+
+
+if __name__ == "__main__":
+    unittest.main()

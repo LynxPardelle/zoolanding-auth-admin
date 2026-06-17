@@ -1,0 +1,25 @@
+version = 0.1
+
+[dev.deploy.parameters]
+stack_name = "zoolanding-auth-admin-dev"
+resolve_s3 = true
+region = "us-east-1"
+capabilities = "CAPABILITY_NAMED_IAM"
+confirm_changeset = false
+fail_on_empty_changeset = false
+
+[test.deploy.parameters]
+stack_name = "zoolanding-auth-admin-test"
+resolve_s3 = true
+region = "us-east-1"
+capabilities = "CAPABILITY_NAMED_IAM"
+confirm_changeset = false
+fail_on_empty_changeset = false
+
+[prod.deploy.parameters]
+stack_name = "zoolanding-auth-admin-prod"
+resolve_s3 = true
+region = "us-east-1"
+capabilities = "CAPABILITY_NAMED_IAM"
+confirm_changeset = false
+fail_on_empty_changeset = false

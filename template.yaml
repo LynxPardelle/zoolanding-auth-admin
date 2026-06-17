@@ -1,0 +1,255 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Zoolanding generic auth admin BFF for draft account and user-management flows
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - test
+      - prod
+    Description: Deployment environment for this auth admin stack.
+  AuthAdminConfigJsonBase64:
+    Type: String
+    Default: eyJ2ZXJzaW9uIjoxLCJwcm9maWxlcyI6W119
+    NoEcho: true
+    Description: Base64-encoded non-secret JSON profile allowlist.
+  CognitoUserPoolArns:
+    Type: CommaDelimitedList
+    Description: Explicit Cognito user pool ARNs this stack may administer.
+  LogLevel:
+    Type: String
+    Default: INFO
+    AllowedValues:
+      - DEBUG
+      - INFO
+      - WARNING
+      - ERROR
+    Description: Lambda log level.
+
+Globals:
+  Function:
+    Runtime: python3.13
+    Timeout: 15
+    MemorySize: 256
+    Tracing: PassThrough
+
+Resources:
+  AuthAdminApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName:
+        Ref: EnvironmentName
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 20
+        ThrottlingRateLimit: 10
+
+  AuthAdminSessionTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      SSESpecification:
+        SSEEnabled: true
+      AttributeDefinitions:
+        - AttributeName: sessionIdHash
+          AttributeType: S
+      KeySchema:
+        - AttributeName: sessionIdHash
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: expiresAt
+        Enabled: true
+
+  AuthAdminUserStateTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      SSESpecification:
+        SSEEnabled: true
+      AttributeDefinitions:
+        - AttributeName: tenantProfileKey
+          AttributeType: S
+        - AttributeName: userKey
+          AttributeType: S
+      KeySchema:
+        - AttributeName: tenantProfileKey
+          KeyType: HASH
+        - AttributeName: userKey
+          KeyType: RANGE
+
+  AuthAdminAuditTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      SSESpecification:
+        SSEEnabled: true
+      AttributeDefinitions:
+        - AttributeName: tenantProfileKey
+          AttributeType: S
+        - AttributeName: auditKey
+          AttributeType: S
+      KeySchema:
+        - AttributeName: tenantProfileKey
+          KeyType: HASH
+        - AttributeName: auditKey
+          KeyType: RANGE
+
+  AuthAdminFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName:
+        Fn::Sub: ${AWS::StackName}-FunctionRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: AuthAdminPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cognito-idp:AdminAddUserToGroup
+                  - cognito-idp:AdminDisableUser
+                  - cognito-idp:AdminEnableUser
+                  - cognito-idp:AdminListGroupsForUser
+                  - cognito-idp:AdminRemoveUserFromGroup
+                  - cognito-idp:InitiateAuth
+                Resource:
+                  Ref: CognitoUserPoolArns
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:GetItem
+                  - dynamodb:Query
+                  - dynamodb:UpdateItem
+                Resource:
+                  - Fn::GetAtt:
+                      - AuthAdminSessionTable
+                      - Arn
+                  - Fn::GetAtt:
+                      - AuthAdminUserStateTable
+                      - Arn
+                  - Fn::GetAtt:
+                      - AuthAdminAuditTable
+                      - Arn
+
+  AuthAdminFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: lambda_function.lambda_handler
+      FunctionName:
+        Fn::Sub: ${AWS::StackName}-Function
+      Description: Provides private auth sessions, account profile, and admin user workflows for draft auth.
+      Role:
+        Fn::GetAtt:
+          - AuthAdminFunctionRole
+          - Arn
+      Environment:
+        Variables:
+          AUTH_ADMIN_ENVIRONMENT:
+            Ref: EnvironmentName
+          AUTH_ADMIN_CONFIG_JSON_BASE64:
+            Ref: AuthAdminConfigJsonBase64
+          AUTH_ADMIN_SESSION_TABLE_NAME:
+            Ref: AuthAdminSessionTable
+          AUTH_ADMIN_USER_STATE_TABLE_NAME:
+            Ref: AuthAdminUserStateTable
+          AUTH_ADMIN_AUDIT_TABLE_NAME:
+            Ref: AuthAdminAuditTable
+          LOG_LEVEL:
+            Ref: LogLevel
+      Events:
+        SessionSignin:
+          Type: HttpApi
+          Properties:
+            ApiId:
+              Ref: AuthAdminApi
+            Method: POST
+            Path: /auth/session/signin
+        SessionMe:
+          Type: HttpApi
+          Properties:
+            ApiId:
+              Ref: AuthAdminApi
+            Method: GET
+            Path: /auth/session/me
+        SessionLogout:
+          Type: HttpApi
+          Properties:
+            ApiId:
+              Ref: AuthAdminApi
+            Method: POST
+            Path: /auth/session/logout
+        AdminUsers:
+          Type: HttpApi
+          Properties:
+            ApiId:
+              Ref: AuthAdminApi
+            Method: GET
+            Path: /auth/admin/users
+        AdminApproveUser:
+          Type: HttpApi
+          Properties:
+            ApiId:
+              Ref: AuthAdminApi
+            Method: POST
+            Path: /auth/admin/users/{subject}/approve
+        AdminSetUserGroups:
+          Type: HttpApi
+          Properties:
+            ApiId:
+              Ref: AuthAdminApi
+            Method: POST
+            Path: /auth/admin/users/{subject}/groups
+        AdminSuspendUser:
+          Type: HttpApi
+          Properties:
+            ApiId:
+              Ref: AuthAdminApi
+            Method: POST
+            Path: /auth/admin/users/{subject}/suspend
+        AdminReactivateUser:
+          Type: HttpApi
+          Properties:
+            ApiId:
+              Ref: AuthAdminApi
+            Method: POST
+            Path: /auth/admin/users/{subject}/reactivate
+
+Outputs:
+  ApiEndpoint:
+    Description: Auth admin HTTP API endpoint.
+    Value:
+      Fn::Sub: https://${AuthAdminApi}.execute-api.${AWS::Region}.amazonaws.com/${EnvironmentName}
+  FunctionName:
+    Description: Auth admin Lambda function name.
+    Value:
+      Ref: AuthAdminFunction
+  FunctionArn:
+    Description: Auth admin Lambda function ARN.
+    Value:
+      Fn::GetAtt:
+        - AuthAdminFunction
+        - Arn
+  SessionTableName:
+    Description: Session table name.
+    Value:
+      Ref: AuthAdminSessionTable
+  UserStateTableName:
+    Description: User state table name.
+    Value:
+      Ref: AuthAdminUserStateTable
+  AuditTableName:
+    Description: Audit table name.
+    Value:
+      Ref: AuthAdminAuditTable

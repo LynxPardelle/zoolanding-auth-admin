@@ -1,0 +1,10 @@
+__pycache__/
+.aws-sam/
+.pytest_cache/
+.venv/
+venv/
+*.pyc
+*.pyo
+*.pyd
+*.log
+auth-admin-config.compact.b64
