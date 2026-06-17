@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   deploy:
-    if: ${{ vars.AWS_ROLE_ARN != '' && vars.AUTH_ADMIN_CONFIG_JSON_BASE64 != '' && vars.COGNITO_USER_POOL_ARNS != '' }}
+    if: ${{ vars.AWS_ROLE_ARN != '' && vars.AUTH_ADMIN_CONFIG_READY == 'true' && vars.COGNITO_USER_POOL_ARNS != '' }}
     runs-on: ubuntu-latest
     environment: dev
     steps:
@@ -24,7 +24,7 @@ jobs:
       - name: Validate auth admin config
         shell: bash
         env:
-          AUTH_ADMIN_CONFIG_JSON_BASE64: ${{ vars.AUTH_ADMIN_CONFIG_JSON_BASE64 }}
+          AUTH_ADMIN_CONFIG_JSON_BASE64: ${{ secrets.AUTH_ADMIN_CONFIG_JSON_BASE64 }}
           AUTH_ADMIN_ENVIRONMENT: dev
           COGNITO_USER_POOL_ARNS: ${{ vars.COGNITO_USER_POOL_ARNS }}
         run: |
