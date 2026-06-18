@@ -61,10 +61,11 @@ class AuthAdminError(Exception):
     status_code = 400
     public_message = "Invalid auth admin request"
 
-    def __init__(self, message: Optional[str] = None):
+    def __init__(self, message: Optional[str] = None, *, error_code: Optional[str] = None):
         super().__init__(message or self.public_message)
         if message:
             self.public_message = message
+        self.error_code = _clean_string(error_code)
 
 
 class AuthAdminConfigError(AuthAdminError):
@@ -141,7 +142,10 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
                 return _reset_user_mfa_response(event, target_subject)
         return _json_response(404, {"ok": False, "error": "Auth admin route not found"})
     except AuthAdminError as exc:
-        return _json_response(exc.status_code, {"ok": False, "error": exc.public_message})
+        payload = {"ok": False, "error": exc.public_message}
+        if exc.error_code:
+            payload["errorCode"] = exc.error_code
+        return _json_response(exc.status_code, payload)
     except ValueError as exc:
         return _json_response(400, {"ok": False, "error": str(exc)})
     except Exception as exc:
@@ -275,7 +279,14 @@ def _create_private_session_response(
     if not id_token:
         raise AuthAdminUnauthorized("Sign-in failed")
     claims = _verify_jwt(id_token, profile)
-    if not _claims_allowed_for_profile(claims, profile):
+    claims_rejection = _claims_rejection_code(claims, profile)
+    if claims_rejection:
+        _log("WARNING", "JWT claims rejected", domain=domain, authProfileId=profile["authProfileId"], reason=claims_rejection)
+        if claims_rejection == "environment_mismatch":
+            raise AuthAdminForbidden(
+                "Account does not belong to this environment",
+                error_code="auth_environment_mismatch",
+            )
         raise AuthAdminUnauthorized("Sign-in failed")
 
     store = _session_store(profile)
@@ -891,31 +902,38 @@ def _require_challenge(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     challenge_value = _cookie_value(event, CHALLENGE_COOKIE_NAME)
     if not challenge_value:
-        raise AuthAdminUnauthorized("Authentication challenge expired")
+        raise _auth_challenge_expired()
     try:
         domain, auth_profile_id = _payload_profile_context(payload)
         profile = _profile_for(domain, auth_profile_id)
     except AuthAdminError as exc:
-        raise AuthAdminUnauthorized("Authentication challenge expired") from exc
+        raise _auth_challenge_expired() from exc
     record = _session_store(profile).get_session(_sha256(challenge_value))
     if not record:
-        raise AuthAdminUnauthorized("Authentication challenge expired")
+        raise _auth_challenge_expired()
     if record.get("recordType") != "authChallenge":
-        raise AuthAdminUnauthorized("Authentication challenge expired")
+        raise _auth_challenge_expired()
     if record.get("revokedAt"):
-        raise AuthAdminUnauthorized("Authentication challenge expired")
+        raise _auth_challenge_expired()
     if int(record.get("expiresAt") or 0) <= _now_epoch():
-        raise AuthAdminUnauthorized("Authentication challenge expired")
+        raise _auth_challenge_expired()
     if record.get("tenantProfileKey") != _tenant_profile_key(profile):
-        raise AuthAdminUnauthorized("Authentication challenge expired")
+        raise _auth_challenge_expired()
     if record.get("domain") != domain or record.get("authProfileId") != auth_profile_id:
-        raise AuthAdminUnauthorized("Authentication challenge expired")
+        raise _auth_challenge_expired()
     if _clean_string(record.get("challengeName")) != expected_challenge:
         raise AuthAdminError("Authentication challenge type does not match")
     if not _clean_string(record.get("cognitoSession")) or not _clean_string(record.get("username")):
-        raise AuthAdminUnauthorized("Authentication challenge expired")
+        raise _auth_challenge_expired()
     _require_challenge_csrf(event, record, profile)
     return record, profile
+
+
+def _auth_challenge_expired() -> AuthAdminUnauthorized:
+    return AuthAdminUnauthorized(
+        "Authentication challenge expired",
+        error_code="auth_challenge_expired",
+    )
 
 
 def _require_mfa_enrollment(event: dict[str, Any], session: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any]:
@@ -1103,21 +1121,25 @@ def _upsert_user_state_from_claims(store: Any, profile: dict[str, Any], claims: 
 
 
 def _claims_allowed_for_profile(claims: dict[str, Any], profile: dict[str, Any]) -> bool:
+    return _claims_rejection_code(claims, profile) is None
+
+
+def _claims_rejection_code(claims: dict[str, Any], profile: dict[str, Any]) -> Optional[str]:
     if not _clean_string(claims.get("sub")):
-        return False
+        return "missing_subject"
     if _clean_string(claims.get("token_use")) != "id":
-        return False
+        return "token_use_mismatch"
     if str(claims.get("iss") or "") != profile["issuer"]:
-        return False
+        return "issuer_mismatch"
     if not set(_string_list(claims.get("aud")) + [_clean_string(claims.get("client_id"))]).intersection(set(profile["audiences"])):
-        return False
+        return "audience_mismatch"
     if profile["tenantClaim"] and str(claims.get(profile["tenantClaim"]) or "") != profile["tenantId"]:
-        return False
+        return "tenant_mismatch"
     if profile["environmentClaim"] and str(claims.get(profile["environmentClaim"]) or "") != profile["environment"]:
-        return False
+        return "environment_mismatch"
     if not set(_string_list(claims.get(profile["groupClaim"]))).intersection(set(profile["allowedGroups"])):
-        return False
-    return True
+        return "group_mismatch"
+    return None
 
 
 def _verify_jwt(token: str, profile: dict[str, Any]) -> dict[str, Any]:

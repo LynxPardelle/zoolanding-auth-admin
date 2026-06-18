@@ -19,6 +19,7 @@ It adds private session, account, and user-management workflows on top of Cognit
 - The session cookie is `__Host-zlp_session` with `HttpOnly`, `Secure`, `SameSite=Lax`, and `Path=/`.
 - Mutating requests require `X-ZLP-CSRF` to match the `zlp_csrf` cookie and the server-side CSRF hash.
 - Challenge mutations require the same CSRF header to match the readable challenge CSRF cookie, normally `zlp_challenge_csrf`, and the server-side challenge CSRF hash.
+- Failure responses may include stable public `errorCode` values so drafts can localize copy; for example `auth_environment_mismatch` after valid credentials prove a user belongs to another configured environment, or `auth_challenge_expired` when the short-lived challenge is gone.
 - `/mi-cuenta` should call `GET /auth/session/me` and is valid for any authenticated user.
 - `GET /auth/session/me` may include public MFA metadata from Cognito `AdminGetUser` under `account.mfa`; it must not return TOTP secrets, Cognito sessions, tokens, or recovery material.
 - `/admin/*` calls require an approved account with a configured admin group.
