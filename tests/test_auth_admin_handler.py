@@ -80,16 +80,61 @@ def admin_claims():
 
 
 class FakeCognito:
-    def __init__(self, groups_by_username=None):
+    def __init__(
+        self,
+        groups_by_username=None,
+        auth_response=None,
+        respond_response=None,
+        respond_error=None,
+        associate_error=None,
+        verify_error=None,
+    ):
         self.calls = []
         self.groups_by_username = groups_by_username or {}
+        self.auth_response = auth_response
+        self.respond_response = respond_response
+        self.respond_error = respond_error
+        self.associate_error = associate_error
+        self.verify_error = verify_error
 
     def initiate_auth(self, **kwargs):
         self.calls.append(("initiate_auth", kwargs))
+        if self.auth_response is not None:
+            return self.auth_response
         return {
             "AuthenticationResult": {
                 "IdToken": "valid-id-token"
             }
+        }
+
+    def respond_to_auth_challenge(self, **kwargs):
+        self.calls.append(("respond_to_auth_challenge", kwargs))
+        if self.respond_error:
+            raise self.respond_error
+        if self.respond_response is not None:
+            return self.respond_response
+        return {
+            "AuthenticationResult": {
+                "IdToken": "valid-id-token"
+            }
+        }
+
+    def associate_software_token(self, **kwargs):
+        self.calls.append(("associate_software_token", kwargs))
+        if self.associate_error:
+            raise self.associate_error
+        return {
+            "SecretCode": "ABCDEFGHIJKLMNOP",
+            "Session": "associated-session",
+        }
+
+    def verify_software_token(self, **kwargs):
+        self.calls.append(("verify_software_token", kwargs))
+        if self.verify_error:
+            raise self.verify_error
+        return {
+            "Status": "SUCCESS",
+            "Session": "verified-session",
         }
 
     def admin_list_groups_for_user(self, **kwargs):
@@ -233,6 +278,237 @@ class AuthAdminHandlerTests(unittest.TestCase):
         cookies = "\n".join(response.get("cookies") or [])
         self.assertIn("__Host-zlp_session=session-value; HttpOnly; Secure; SameSite=Lax; Path=/", cookies)
         self.assertIn("zlp_csrf=csrf-value; Secure; SameSite=Lax; Path=/", cookies)
+
+    def test_signin_challenge_stores_cognito_session_server_side(self):
+        fake_cognito = FakeCognito(auth_response={
+            "ChallengeName": "SOFTWARE_TOKEN_MFA",
+            "ChallengeParameters": {"USER_ID_FOR_SRP": "client-cognito-username"},
+            "Session": "raw-cognito-session",
+        })
+
+        response, fake_dynamo, _ = self.run_with_fakes(http_event("POST", "/auth/session/signin", {
+            "domain": "zoositioweb.com.mx",
+            "authProfileId": "staff",
+            "email": "client@example.test",
+            "password": "ValidPass123!",
+        }), fake_cognito=fake_cognito)
+
+        response_body = body(response)
+        self.assertEqual(response["statusCode"], 200)
+        self.assertEqual(response_body["status"], "challenge-required")
+        self.assertEqual(response_body["challengeName"], "SOFTWARE_TOKEN_MFA")
+        self.assertIn("__Host-zlp_challenge=session-value; HttpOnly; Secure; SameSite=Lax; Path=/", "\n".join(response.get("cookies") or []))
+        self.assertIn("zlp_challenge_csrf=csrf-value; Secure; SameSite=Lax; Path=/", "\n".join(response.get("cookies") or []))
+        self.assertNotIn("raw-cognito-session", json.dumps(response_body))
+        self.assertEqual(len(fake_dynamo.sessions), 1)
+        challenge_record = next(iter(fake_dynamo.sessions.values()))
+        self.assertEqual(challenge_record["recordType"], "authChallenge")
+        self.assertEqual(challenge_record["cognitoSession"], "raw-cognito-session")
+        self.assertEqual(challenge_record["challengeCsrfHash"], auth_admin._sha256("csrf-value"))
+
+    def test_software_token_mfa_challenge_creates_private_session(self):
+        challenge_response = {
+            "ChallengeName": "SOFTWARE_TOKEN_MFA",
+            "ChallengeParameters": {"USER_ID_FOR_SRP": "client-cognito-username"},
+            "Session": "raw-cognito-session",
+        }
+        _, fake_dynamo, _ = self.run_with_fakes(
+            http_event("POST", "/auth/session/signin", {
+                "domain": "zoositioweb.com.mx",
+                "authProfileId": "staff",
+                "email": "client@example.test",
+                "password": "ValidPass123!",
+            }),
+            fake_cognito=FakeCognito(auth_response=challenge_response),
+        )
+
+        response, _, fake_cognito = self.run_with_fakes(
+            http_event("POST", "/auth/session/challenge/respond", {
+                "domain": "zoositioweb.com.mx",
+                "authProfileId": "staff",
+                "code": "123456",
+            }, headers={"x-zlp-csrf": "csrf-value"}, cookies=["__Host-zlp_challenge=session-value", "zlp_challenge_csrf=csrf-value"]),
+            fake_dynamo=fake_dynamo,
+        )
+
+        response_body = body(response)
+        self.assertEqual(response["statusCode"], 200)
+        self.assertEqual(response_body["status"], "signed-in")
+        self.assertIn(("respond_to_auth_challenge", {
+            "ClientId": "public-client-id",
+            "ChallengeName": "SOFTWARE_TOKEN_MFA",
+            "Session": "raw-cognito-session",
+            "ChallengeResponses": {
+                "USERNAME": "client-cognito-username",
+                "SOFTWARE_TOKEN_MFA_CODE": "123456",
+            },
+            "ClientMetadata": {
+                "domain": "zoositioweb.com.mx",
+                "authProfileId": "staff",
+                "environment": "test",
+            },
+        }), fake_cognito.calls)
+        self.assertNotIn("raw-cognito-session", json.dumps(response_body))
+        self.assertIn("__Host-zlp_challenge=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0", "\n".join(response.get("cookies") or []))
+        self.assertIn("zlp_challenge_csrf=; Secure; SameSite=Lax; Path=/; Max-Age=0", "\n".join(response.get("cookies") or []))
+
+    def test_software_token_mfa_challenge_requires_challenge_csrf(self):
+        challenge_response = {
+            "ChallengeName": "SOFTWARE_TOKEN_MFA",
+            "ChallengeParameters": {"USER_ID_FOR_SRP": "client-cognito-username"},
+            "Session": "raw-cognito-session",
+        }
+        _, fake_dynamo, _ = self.run_with_fakes(
+            http_event("POST", "/auth/session/signin", {
+                "domain": "zoositioweb.com.mx",
+                "authProfileId": "staff",
+                "email": "client@example.test",
+                "password": "ValidPass123!",
+            }),
+            fake_cognito=FakeCognito(auth_response=challenge_response),
+        )
+
+        response, _, fake_cognito = self.run_with_fakes(
+            http_event("POST", "/auth/session/challenge/respond", {
+                "domain": "zoositioweb.com.mx",
+                "authProfileId": "staff",
+                "code": "123456",
+            }, cookies=["__Host-zlp_challenge=session-value", "zlp_challenge_csrf=wrong-value"]),
+            fake_dynamo=fake_dynamo,
+        )
+
+        self.assertEqual(response["statusCode"], 403)
+        self.assertEqual(body(response)["error"], "CSRF validation failed")
+        self.assertEqual(fake_cognito.calls, [])
+
+    def test_software_token_mfa_cognito_error_returns_controlled_unauthorized(self):
+        challenge_response = {
+            "ChallengeName": "SOFTWARE_TOKEN_MFA",
+            "ChallengeParameters": {"USER_ID_FOR_SRP": "client-cognito-username"},
+            "Session": "raw-cognito-session",
+        }
+        _, fake_dynamo, _ = self.run_with_fakes(
+            http_event("POST", "/auth/session/signin", {
+                "domain": "zoositioweb.com.mx",
+                "authProfileId": "staff",
+                "email": "client@example.test",
+                "password": "ValidPass123!",
+            }),
+            fake_cognito=FakeCognito(auth_response=challenge_response),
+        )
+
+        response, _, fake_cognito = self.run_with_fakes(
+            http_event("POST", "/auth/session/challenge/respond", {
+                "domain": "zoositioweb.com.mx",
+                "authProfileId": "staff",
+                "code": "123456",
+            }, headers={"x-zlp-csrf": "csrf-value"}, cookies=["__Host-zlp_challenge=session-value", "zlp_challenge_csrf=csrf-value"]),
+            fake_dynamo=fake_dynamo,
+            fake_cognito=FakeCognito(respond_error=RuntimeError("expired-cognito-session")),
+        )
+
+        self.assertEqual(response["statusCode"], 401)
+        self.assertEqual(body(response)["error"], "Authentication challenge failed")
+        self.assertEqual([call[0] for call in fake_cognito.calls], ["respond_to_auth_challenge"])
+
+    def test_mfa_challenge_rejects_unsupported_next_challenge(self):
+        challenge_response = {
+            "ChallengeName": "SOFTWARE_TOKEN_MFA",
+            "ChallengeParameters": {"USER_ID_FOR_SRP": "client-cognito-username"},
+            "Session": "raw-cognito-session",
+        }
+        _, fake_dynamo, _ = self.run_with_fakes(
+            http_event("POST", "/auth/session/signin", {
+                "domain": "zoositioweb.com.mx",
+                "authProfileId": "staff",
+                "email": "client@example.test",
+                "password": "ValidPass123!",
+            }),
+            fake_cognito=FakeCognito(auth_response=challenge_response),
+        )
+
+        response, _, _ = self.run_with_fakes(
+            http_event("POST", "/auth/session/challenge/respond", {
+                "domain": "zoositioweb.com.mx",
+                "authProfileId": "staff",
+                "code": "123456",
+            }, headers={"x-zlp-csrf": "csrf-value"}, cookies=["__Host-zlp_challenge=session-value", "zlp_challenge_csrf=csrf-value"]),
+            fake_dynamo=fake_dynamo,
+            fake_cognito=FakeCognito(respond_response={
+                "ChallengeName": "CUSTOM_CHALLENGE",
+                "Session": "next-session",
+            }),
+        )
+
+        self.assertEqual(response["statusCode"], 401)
+        self.assertEqual(body(response)["error"], "Authentication challenge failed")
+
+    def test_mfa_setup_challenge_associates_and_verifies_totp_without_exposing_session(self):
+        challenge_response = {
+            "ChallengeName": "MFA_SETUP",
+            "ChallengeParameters": {"USER_ID_FOR_SRP": "client-cognito-username", "MFAS_CAN_SETUP": '["SOFTWARE_TOKEN_MFA"]'},
+            "Session": "setup-cognito-session",
+        }
+        _, fake_dynamo, _ = self.run_with_fakes(
+            http_event("POST", "/auth/session/signin", {
+                "domain": "zoositioweb.com.mx",
+                "authProfileId": "staff",
+                "email": "client@example.test",
+                "password": "ValidPass123!",
+            }),
+            fake_cognito=FakeCognito(auth_response=challenge_response),
+        )
+
+        setup_response, _, fake_cognito = self.run_with_fakes(
+            http_event("POST", "/auth/session/mfa/setup", {
+                "domain": "zoositioweb.com.mx",
+                "authProfileId": "staff",
+            }, headers={"x-zlp-csrf": "csrf-value"}, cookies=["__Host-zlp_challenge=session-value", "zlp_challenge_csrf=csrf-value"]),
+            fake_dynamo=fake_dynamo,
+        )
+
+        setup_body = body(setup_response)
+        self.assertEqual(setup_response["statusCode"], 200)
+        self.assertEqual(setup_body["status"], "mfa-setup-ready")
+        self.assertEqual(setup_body["setup"]["sharedSecret"], "ABCDEFGHIJKLMNOP")
+        self.assertIn("otpauth://totp/", setup_body["setup"]["otpauthUri"])
+        self.assertNotIn("setup-cognito-session", json.dumps(setup_body))
+        self.assertIn(("associate_software_token", {
+            "Session": "setup-cognito-session",
+        }), fake_cognito.calls)
+
+        verify_response, _, fake_cognito = self.run_with_fakes(
+            http_event("POST", "/auth/session/mfa/verify", {
+                "domain": "zoositioweb.com.mx",
+                "authProfileId": "staff",
+                "code": "654321",
+            }, headers={"x-zlp-csrf": "csrf-value"}, cookies=["__Host-zlp_challenge=session-value", "zlp_challenge_csrf=csrf-value"]),
+            fake_dynamo=fake_dynamo,
+            fake_cognito=fake_cognito,
+        )
+
+        verify_body = body(verify_response)
+        self.assertEqual(verify_response["statusCode"], 200)
+        self.assertEqual(verify_body["status"], "signed-in")
+        self.assertIn(("verify_software_token", {
+            "Session": "associated-session",
+            "UserCode": "654321",
+            "FriendlyDeviceName": "Zoolanding authenticator",
+        }), fake_cognito.calls)
+        self.assertIn(("respond_to_auth_challenge", {
+            "ClientId": "public-client-id",
+            "ChallengeName": "MFA_SETUP",
+            "Session": "verified-session",
+            "ChallengeResponses": {
+                "USERNAME": "client-cognito-username",
+            },
+            "ClientMetadata": {
+                "domain": "zoositioweb.com.mx",
+                "authProfileId": "staff",
+                "environment": "test",
+            },
+        }), fake_cognito.calls)
+        self.assertNotIn("associated-session", json.dumps(verify_body))
 
     def test_me_returns_sanitized_account_for_pending_user(self):
         _, fake_dynamo, _, session_value, _ = self.sign_in()
@@ -737,6 +1013,18 @@ class AuthAdminHandlerTests(unittest.TestCase):
         self.assertEqual(response["statusCode"], 200)
         self.assertEqual(body(response)["status"], "signed-out")
         self.assertIn("Max-Age=0", "\n".join(response.get("cookies") or []))
+
+    def test_template_grants_cognito_challenge_permissions_to_auth_admin_role(self):
+        with open(os.path.join(os.path.dirname(__file__), os.pardir, "template.yaml"), encoding="utf-8") as template_file:
+            template = template_file.read()
+
+        for action in (
+            "cognito-idp:AssociateSoftwareToken",
+            "cognito-idp:RespondToAuthChallenge",
+            "cognito-idp:VerifySoftwareToken",
+        ):
+            self.assertIn(action, template)
+        self.assertIn("Ref: CognitoUserPoolArns", template)
 
 
 if __name__ == "__main__":
