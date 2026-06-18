@@ -90,6 +90,8 @@ class FakeCognito:
         associate_error=None,
         verify_error=None,
         preference_error=None,
+        mfa_settings_by_username=None,
+        admin_get_user_error=None,
     ):
         self.calls = []
         self.groups_by_username = groups_by_username or {}
@@ -99,6 +101,8 @@ class FakeCognito:
         self.associate_error = associate_error
         self.verify_error = verify_error
         self.preference_error = preference_error
+        self.mfa_settings_by_username = mfa_settings_by_username or {}
+        self.admin_get_user_error = admin_get_user_error
 
     def initiate_auth(self, **kwargs):
         self.calls.append(("initiate_auth", kwargs))
@@ -145,6 +149,15 @@ class FakeCognito:
         if self.preference_error:
             raise self.preference_error
         return {}
+
+    def admin_get_user(self, **kwargs):
+        self.calls.append(("admin_get_user", kwargs))
+        if self.admin_get_user_error:
+            raise self.admin_get_user_error
+        return self.mfa_settings_by_username.get(kwargs["Username"], {
+            "UserMFASettingList": [],
+            "PreferredMfaSetting": "",
+        })
 
     def admin_list_groups_for_user(self, **kwargs):
         self.calls.append(("admin_list_groups_for_user", kwargs))
@@ -768,6 +781,61 @@ class AuthAdminHandlerTests(unittest.TestCase):
         self.assertEqual(account["roles"], ["zoosite-client"])
         self.assertNotIn("sessionIdHash", json.dumps(account))
         self.assertNotIn("tenantId", json.dumps(account))
+        self.assertEqual(account["mfa"], {
+            "status": "disabled",
+            "softwareTokenEnabled": False,
+            "methods": [],
+            "preferredMethod": "",
+        })
+
+    def test_me_returns_public_software_token_mfa_state(self):
+        _, fake_dynamo, _, session_value, _ = self.sign_in()
+        fake_cognito = FakeCognito(mfa_settings_by_username={
+            "client@example.test": {
+                "UserMFASettingList": ["SOFTWARE_TOKEN_MFA"],
+                "PreferredMfaSetting": "SOFTWARE_TOKEN_MFA",
+            }
+        })
+
+        response, _, fake_cognito = self.run_with_fakes(
+            http_event("GET", "/auth/session/me", cookies=[f"__Host-zlp_session={session_value}"]),
+            fake_dynamo=fake_dynamo,
+            fake_cognito=fake_cognito,
+        )
+
+        self.assertEqual(response["statusCode"], 200)
+        account = body(response)["account"]
+        self.assertEqual(account["mfa"], {
+            "status": "enabled",
+            "softwareTokenEnabled": True,
+            "methods": ["SOFTWARE_TOKEN_MFA"],
+            "preferredMethod": "SOFTWARE_TOKEN_MFA",
+        })
+        self.assertIn(("admin_get_user", {
+            "UserPoolId": "us-east-1_pool",
+            "Username": "client@example.test",
+        }), fake_cognito.calls)
+        self.assertNotIn("SecretCode", json.dumps(account))
+
+    def test_me_returns_unknown_mfa_state_when_cognito_state_read_fails(self):
+        _, fake_dynamo, _, session_value, _ = self.sign_in()
+        fake_cognito = FakeCognito(admin_get_user_error=RuntimeError("cognito-down"))
+
+        response, _, _ = self.run_with_fakes(
+            http_event("GET", "/auth/session/me", cookies=[f"__Host-zlp_session={session_value}"]),
+            fake_dynamo=fake_dynamo,
+            fake_cognito=fake_cognito,
+        )
+
+        self.assertEqual(response["statusCode"], 200)
+        account = body(response)["account"]
+        self.assertEqual(account["mfa"], {
+            "status": "unknown",
+            "softwareTokenEnabled": None,
+            "methods": [],
+            "preferredMethod": "",
+        })
+        self.assertNotIn("SecretCode", json.dumps(account))
 
     def test_session_request_requires_matching_draft_context(self):
         _, fake_dynamo, _, session_value, _ = self.sign_in()
@@ -1262,6 +1330,7 @@ class AuthAdminHandlerTests(unittest.TestCase):
             template = template_file.read()
 
         for action in (
+            "cognito-idp:AdminGetUser",
             "cognito-idp:AssociateSoftwareToken",
             "cognito-idp:RespondToAuthChallenge",
             "cognito-idp:SetUserMFAPreference",
