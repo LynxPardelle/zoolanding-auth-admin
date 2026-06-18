@@ -19,6 +19,7 @@ It adds private session, account, and user-management workflows on top of Cognit
 - Mutating requests require `X-ZLP-CSRF` to match the `zlp_csrf` cookie and the server-side CSRF hash.
 - Challenge mutations require the same CSRF header to match the readable challenge CSRF cookie, normally `zlp_challenge_csrf`, and the server-side challenge CSRF hash.
 - `/mi-cuenta` should call `GET /auth/session/me` and is valid for any authenticated user.
+- `GET /auth/session/me` may include public MFA metadata from Cognito `AdminGetUser` under `account.mfa`; it must not return TOTP secrets, Cognito sessions, tokens, or recovery material.
 - `/admin/*` calls require an approved account with a configured admin group.
 - Admin requests re-check current user state/session version so suspensions and group changes do not rely on stale session roles.
 - Every admin mutation writes an audit event.

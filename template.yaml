@@ -126,6 +126,7 @@ Resources:
                   - cognito-idp:AdminAddUserToGroup
                   - cognito-idp:AdminDisableUser
                   - cognito-idp:AdminEnableUser
+                  - cognito-idp:AdminGetUser
                   - cognito-idp:AdminListGroupsForUser
                   - cognito-idp:AdminRemoveUserFromGroup
                   - cognito-idp:AssociateSoftwareToken

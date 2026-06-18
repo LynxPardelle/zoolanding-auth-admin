@@ -114,7 +114,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             session, profile = _require_session(event)
             return _json_response(200, {
                 "ok": True,
-                "account": _public_account(session, profile),
+                "account": _public_account_with_mfa(session, profile),
                 "session": _public_session(session, profile),
             })
         if path == "/auth/session/logout" and method == "POST":
@@ -590,7 +590,7 @@ def _mfa_enroll_verify_response(event: dict[str, Any]) -> dict[str, Any]:
         "domain": session["domain"],
         "authProfileId": profile["authProfileId"],
         "status": "mfa-enabled",
-        "account": _public_account(session, profile),
+        "account": _public_account_with_mfa(session, profile, software_token_enabled=True),
         "session": _public_session(session, profile),
     }, cookies=[
         _cookie(MFA_ENROLLMENT_COOKIE_NAME, "", http_only=True, max_age=0),
@@ -674,7 +674,7 @@ def _mfa_disable_response(event: dict[str, Any]) -> dict[str, Any]:
         "domain": session["domain"],
         "authProfileId": profile["authProfileId"],
         "status": "mfa-disabled",
-        "account": _public_account(session, profile),
+        "account": _public_account_with_mfa(session, profile, software_token_enabled=False),
         "session": _public_session(session, profile),
     })
 
@@ -1268,6 +1268,74 @@ def _public_account(session: dict[str, Any], profile: dict[str, Any]) -> dict[st
         "domain": session.get("domain"),
         "authProfileId": session.get("authProfileId"),
     }, profile)
+
+
+def _public_account_with_mfa(
+    session: dict[str, Any],
+    profile: dict[str, Any],
+    *,
+    software_token_enabled: Optional[bool] = None,
+) -> dict[str, Any]:
+    account = _public_account(session, profile)
+    account["mfa"] = _public_mfa_state(session, profile, software_token_enabled=software_token_enabled)
+    return account
+
+
+def _public_mfa_state(
+    session: dict[str, Any],
+    profile: dict[str, Any],
+    *,
+    software_token_enabled: Optional[bool] = None,
+) -> dict[str, Any]:
+    if software_token_enabled is not None:
+        return {
+            "status": "enabled" if software_token_enabled else "disabled",
+            "softwareTokenEnabled": software_token_enabled,
+            "methods": ["SOFTWARE_TOKEN_MFA"] if software_token_enabled else [],
+            "preferredMethod": "SOFTWARE_TOKEN_MFA" if software_token_enabled else "",
+        }
+
+    username = _clean_string(session.get("username") or session.get("email") or session.get("subject"))
+    if not username:
+        return _unknown_mfa_state()
+
+    try:
+        response = _cognito_client().admin_get_user(
+            UserPoolId=profile["userPoolId"],
+            Username=username,
+        )
+    except Exception as exc:
+        _log(
+            "WARNING",
+            "Cognito MFA state read failed",
+            domain=session.get("domain"),
+            authProfileId=profile.get("authProfileId"),
+            errorType=type(exc).__name__,
+        )
+        return _unknown_mfa_state()
+
+    methods = [
+        method
+        for method in _string_list(response.get("UserMFASettingList") if isinstance(response, dict) else None)
+        if method in {"SOFTWARE_TOKEN_MFA", "SMS_MFA", "EMAIL_OTP"}
+    ]
+    preferred = _clean_string(response.get("PreferredMfaSetting") if isinstance(response, dict) else "")
+    software_enabled = "SOFTWARE_TOKEN_MFA" in methods or preferred == "SOFTWARE_TOKEN_MFA"
+    return {
+        "status": "enabled" if software_enabled else "disabled",
+        "softwareTokenEnabled": software_enabled,
+        "methods": methods,
+        "preferredMethod": preferred if preferred in {"SOFTWARE_TOKEN_MFA", "SMS_MFA", "EMAIL_OTP"} else "",
+    }
+
+
+def _unknown_mfa_state() -> dict[str, Any]:
+    return {
+        "status": "unknown",
+        "softwareTokenEnabled": None,
+        "methods": [],
+        "preferredMethod": "",
+    }
 
 
 def _public_user(user: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any]:
