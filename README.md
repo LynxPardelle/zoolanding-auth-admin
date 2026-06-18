@@ -8,12 +8,14 @@ It adds private session, account, and user-management workflows on top of Cognit
 
 - Browser auth forms send only public context: `domain`, `authProfileId`, email, password, code, and language.
 - Tenant, environment, Cognito user pool, app client, group policy, approval policy, and manageable groups come from `AUTH_ADMIN_CONFIG_JSON_BASE64`.
-- No JWT, ID token, access token, or refresh token is returned to the browser.
+- No JWT, ID token, access token, or refresh token is returned to the browser; raw Cognito challenge sessions are also server-only.
 - Sign-in creates a server-side session and returns only sanitized metadata.
+- Cognito `SOFTWARE_TOKEN_MFA` and `MFA_SETUP` challenges store raw Cognito `Session` values server-side behind a short-lived challenge cookie.
 - This BFF currently creates sessions through custom sign-in. Cognito Managed Login / Hosted UI can remain enabled for drafts that prefer it, but Hosted UI sessions do not become BFF HttpOnly sessions unless a future server-side callback/token-exchange endpoint is added.
 - Requests after sign-in must carry `X-ZLP-Domain` and `X-ZLP-Auth-Profile-Id`; the Lambda compares them with the private session before returning account/admin data.
 - The session cookie is `__Host-zlp_session` with `HttpOnly`, `Secure`, `SameSite=Lax`, and `Path=/`.
 - Mutating requests require `X-ZLP-CSRF` to match the `zlp_csrf` cookie and the server-side CSRF hash.
+- Challenge mutations require the same CSRF header to match the readable challenge CSRF cookie, normally `zlp_challenge_csrf`, and the server-side challenge CSRF hash.
 - `/mi-cuenta` should call `GET /auth/session/me` and is valid for any authenticated user.
 - `/admin/*` calls require an approved account with a configured admin group.
 - Admin requests re-check current user state/session version so suspensions and group changes do not rely on stale session roles.
@@ -22,6 +24,9 @@ It adds private session, account, and user-management workflows on top of Cognit
 ## Endpoints
 
 - `POST /auth/session/signin`
+- `POST /auth/session/challenge/respond`
+- `POST /auth/session/mfa/setup`
+- `POST /auth/session/mfa/verify`
 - `GET /auth/session/me`
 - `POST /auth/session/logout`
 - `GET /auth/admin/users`
@@ -59,6 +64,16 @@ Deployments pass a base64-encoded JSON config through `AuthAdminConfigJsonBase64
       "adminGroupsAutoApproved": true,
       "customAuth": {
         "signin": { "enabled": true }
+      },
+      "mfa": {
+        "mode": "optional",
+        "totp": { "enabled": true }
+      },
+      "session": {
+        "challengeRespondPath": "/auth/session/challenge/respond",
+        "mfaSetupPath": "/auth/session/mfa/setup",
+        "mfaVerifyPath": "/auth/session/mfa/verify",
+        "challengeCsrfCookieName": "zlp_challenge_csrf"
       }
     }
   ]
@@ -72,6 +87,8 @@ Rules:
 - Config rejects secret-like keys and common secret-looking values.
 - The deployed stack environment must match the selected profile `environment`.
 - Stack-created DynamoDB tables are default storage. A future per-profile `tables` block can point a profile to draft-specific tables.
+- `mfa.mode` may be `off`, `optional`, or `required`; `optional` and `required` require TOTP to be enabled in profile policy and Cognito.
+- TOTP setup material is sensitive enrollment material. Pages may display a setup secret only for explicit enrollment and must not put it in URLs, logs, analytics payloads, or durable notes.
 
 ## Local Verification
 

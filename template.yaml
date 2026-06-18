@@ -128,7 +128,10 @@ Resources:
                   - cognito-idp:AdminEnableUser
                   - cognito-idp:AdminListGroupsForUser
                   - cognito-idp:AdminRemoveUserFromGroup
+                  - cognito-idp:AssociateSoftwareToken
                   - cognito-idp:InitiateAuth
+                  - cognito-idp:RespondToAuthChallenge
+                  - cognito-idp:VerifySoftwareToken
                 Resource:
                   Ref: CognitoUserPoolArns
               - Effect: Allow
@@ -182,6 +185,27 @@ Resources:
               Ref: AuthAdminApi
             Method: POST
             Path: /auth/session/signin
+        SessionChallengeRespond:
+          Type: HttpApi
+          Properties:
+            ApiId:
+              Ref: AuthAdminApi
+            Method: POST
+            Path: /auth/session/challenge/respond
+        SessionMfaSetup:
+          Type: HttpApi
+          Properties:
+            ApiId:
+              Ref: AuthAdminApi
+            Method: POST
+            Path: /auth/session/mfa/setup
+        SessionMfaVerify:
+          Type: HttpApi
+          Properties:
+            ApiId:
+              Ref: AuthAdminApi
+            Method: POST
+            Path: /auth/session/mfa/verify
         SessionMe:
           Type: HttpApi
           Properties:
