@@ -13,6 +13,7 @@ It adds private session, account, and user-management workflows on top of Cognit
 - Cognito `SOFTWARE_TOKEN_MFA` and `MFA_SETUP` challenges store raw Cognito `Session` values server-side behind a short-lived challenge cookie.
 - Voluntary TOTP enrollment for an already signed-in user stores the temporary Cognito access token server-side only behind a short-lived enrollment cookie while the setup code is verified.
 - Voluntary TOTP disablement requires an active BFF session, normal CSRF, the current password, and the current authenticator code before Cognito MFA preference is changed.
+- Admin/support MFA reset is separate from self-service disablement. It requires an approved admin session and CSRF, blocks self-reset, disables the target user's Cognito software-token MFA preference, bumps the target session version, and writes an audit event.
 - This BFF currently creates sessions through custom sign-in. Cognito Managed Login / Hosted UI can remain enabled for drafts that prefer it, but Hosted UI sessions do not become BFF HttpOnly sessions unless a future server-side callback/token-exchange endpoint is added.
 - Requests after sign-in must carry `X-ZLP-Domain` and `X-ZLP-Auth-Profile-Id`; the Lambda compares them with the private session before returning account/admin data.
 - The session cookie is `__Host-zlp_session` with `HttpOnly`, `Secure`, `SameSite=Lax`, and `Path=/`.
@@ -40,6 +41,7 @@ It adds private session, account, and user-management workflows on top of Cognit
 - `POST /auth/admin/users/{subject}/groups`
 - `POST /auth/admin/users/{subject}/suspend`
 - `POST /auth/admin/users/{subject}/reactivate`
+- `POST /auth/admin/users/{subject}/mfa/reset`
 
 ## Config
 
@@ -89,6 +91,14 @@ Deployments pass a base64-encoded JSON config through `AuthAdminConfigJsonBase64
         "mfaDisablePath": "/auth/session/mfa/disable",
         "challengeCsrfCookieName": "zlp_challenge_csrf",
         "mfaEnrollCsrfCookieName": "zlp_mfa_enroll_csrf"
+      },
+      "admin": {
+        "usersPath": "/auth/admin/users",
+        "approveUserPathTemplate": "/auth/admin/users/{subject}/approve",
+        "groupsPathTemplate": "/auth/admin/users/{subject}/groups",
+        "suspendUserPathTemplate": "/auth/admin/users/{subject}/suspend",
+        "reactivateUserPathTemplate": "/auth/admin/users/{subject}/reactivate",
+        "resetUserMfaPathTemplate": "/auth/admin/users/{subject}/mfa/reset"
       }
     }
   ]
@@ -106,6 +116,7 @@ Rules:
 - `mfa.totp.issuer`, `accountLabelTemplate`, and `friendlyDeviceName` are optional profile fields for authenticator-app display names. Template placeholders are limited to safe profile/user fields such as `{domain}`, `{authProfileId}`, `{tenantId}`, `{username}`, and `{email}`.
 - TOTP setup material is sensitive enrollment material. Pages may display a setup secret only for explicit enrollment and must not put it in URLs, logs, analytics payloads, or durable notes.
 - `/auth/session/mfa/disable` is self-service only for users who can reauthenticate with password plus current TOTP code. Lost-device recovery still belongs to an admin/support path.
+- `/auth/admin/users/{subject}/mfa/reset` is the admin/support lost-device path. Cognito `AdminSetUserMFAPreference` disables the target user's software-token MFA preference; the user configures a replacement authenticator on a later sign-in/enrollment flow. It does not expose or delete a TOTP secret in browser responses.
 
 ## Local Verification
 
