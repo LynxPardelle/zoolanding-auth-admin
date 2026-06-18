@@ -12,6 +12,7 @@ It adds private session, account, and user-management workflows on top of Cognit
 - Sign-in creates a server-side session and returns only sanitized metadata.
 - Cognito `SOFTWARE_TOKEN_MFA` and `MFA_SETUP` challenges store raw Cognito `Session` values server-side behind a short-lived challenge cookie.
 - Voluntary TOTP enrollment for an already signed-in user stores the temporary Cognito access token server-side only behind a short-lived enrollment cookie while the setup code is verified.
+- Voluntary TOTP disablement requires an active BFF session, normal CSRF, the current password, and the current authenticator code before Cognito MFA preference is changed.
 - This BFF currently creates sessions through custom sign-in. Cognito Managed Login / Hosted UI can remain enabled for drafts that prefer it, but Hosted UI sessions do not become BFF HttpOnly sessions unless a future server-side callback/token-exchange endpoint is added.
 - Requests after sign-in must carry `X-ZLP-Domain` and `X-ZLP-Auth-Profile-Id`; the Lambda compares them with the private session before returning account/admin data.
 - The session cookie is `__Host-zlp_session` with `HttpOnly`, `Secure`, `SameSite=Lax`, and `Path=/`.
@@ -30,6 +31,7 @@ It adds private session, account, and user-management workflows on top of Cognit
 - `POST /auth/session/mfa/verify`
 - `POST /auth/session/mfa/enroll/start`
 - `POST /auth/session/mfa/enroll/verify`
+- `POST /auth/session/mfa/disable`
 - `GET /auth/session/me`
 - `POST /auth/session/logout`
 - `GET /auth/admin/users`
@@ -70,7 +72,12 @@ Deployments pass a base64-encoded JSON config through `AuthAdminConfigJsonBase64
       },
       "mfa": {
         "mode": "optional",
-        "totp": { "enabled": true }
+        "totp": {
+          "enabled": true,
+          "issuer": "zoositioweb",
+          "accountLabelTemplate": "{email}",
+          "friendlyDeviceName": "zoositioweb acceso"
+        }
       },
       "session": {
         "challengeRespondPath": "/auth/session/challenge/respond",
@@ -78,6 +85,7 @@ Deployments pass a base64-encoded JSON config through `AuthAdminConfigJsonBase64
         "mfaVerifyPath": "/auth/session/mfa/verify",
         "mfaEnrollStartPath": "/auth/session/mfa/enroll/start",
         "mfaEnrollVerifyPath": "/auth/session/mfa/enroll/verify",
+        "mfaDisablePath": "/auth/session/mfa/disable",
         "challengeCsrfCookieName": "zlp_challenge_csrf",
         "mfaEnrollCsrfCookieName": "zlp_mfa_enroll_csrf"
       }
@@ -94,7 +102,9 @@ Rules:
 - The deployed stack environment must match the selected profile `environment`.
 - Stack-created DynamoDB tables are default storage. A future per-profile `tables` block can point a profile to draft-specific tables.
 - `mfa.mode` may be `off`, `optional`, or `required`; `optional` and `required` require TOTP to be enabled in profile policy and Cognito.
+- `mfa.totp.issuer`, `accountLabelTemplate`, and `friendlyDeviceName` are optional profile fields for authenticator-app display names. Template placeholders are limited to safe profile/user fields such as `{domain}`, `{authProfileId}`, `{tenantId}`, `{username}`, and `{email}`.
 - TOTP setup material is sensitive enrollment material. Pages may display a setup secret only for explicit enrollment and must not put it in URLs, logs, analytics payloads, or durable notes.
+- `/auth/session/mfa/disable` is self-service only for users who can reauthenticate with password plus current TOTP code. Lost-device recovery still belongs to an admin/support path.
 
 ## Local Verification
 

@@ -50,6 +50,9 @@ SECRET_VALUE_MARKERS = (
     "gho_",
 )
 CONTROL_OR_WHITESPACE_RE = re.compile(r"[\s\x00-\x1f\x7f]")
+CONTROL_CHAR_RE = re.compile(r"[\x00-\x1f\x7f]")
+TOTP_TEMPLATE_RE = re.compile(r"\{([A-Za-z][A-Za-z0-9_]*)\}")
+TOTP_TEMPLATE_KEYS = {"issuer", "domain", "authProfileId", "tenantId", "username", "email"}
 DOMAIN_RE = re.compile(r"^(?!-)(?:[a-z0-9-]{1,63}\.)+[a-z]{2,63}$")
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 
@@ -105,6 +108,8 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             return _mfa_enroll_start_response(event)
         if path == "/auth/session/mfa/enroll/verify" and method == "POST":
             return _mfa_enroll_verify_response(event)
+        if path == "/auth/session/mfa/disable" and method == "POST":
+            return _mfa_disable_response(event)
         if path == "/auth/session/me" and method == "GET":
             session, profile = _require_session(event)
             return _json_response(200, {
@@ -437,7 +442,7 @@ def _mfa_verify_response(event: dict[str, Any]) -> dict[str, Any]:
         response = _cognito_client().verify_software_token(
             Session=record["cognitoSession"],
             UserCode=code,
-            FriendlyDeviceName="Zoolanding authenticator",
+            FriendlyDeviceName=_totp_friendly_device_name(profile),
         )
     except Exception as exc:
         _log("WARNING", "Cognito MFA verification failed", domain=record["domain"], authProfileId=profile["authProfileId"], errorType=type(exc).__name__)
@@ -559,7 +564,7 @@ def _mfa_enroll_verify_response(event: dict[str, Any]) -> dict[str, Any]:
         response = _cognito_client().verify_software_token(
             AccessToken=record["cognitoAccessToken"],
             UserCode=code,
-            FriendlyDeviceName="Zoolanding authenticator",
+            FriendlyDeviceName=_totp_friendly_device_name(profile),
         )
     except Exception as exc:
         _log("WARNING", "Cognito voluntary MFA verification failed", domain=session["domain"], authProfileId=profile["authProfileId"], errorType=type(exc).__name__)
@@ -591,6 +596,87 @@ def _mfa_enroll_verify_response(event: dict[str, Any]) -> dict[str, Any]:
         _cookie(MFA_ENROLLMENT_COOKIE_NAME, "", http_only=True, max_age=0),
         _cookie(_mfa_enrollment_csrf_cookie_name(profile), "", http_only=False, max_age=0),
     ])
+
+
+def _mfa_disable_response(event: dict[str, Any]) -> dict[str, Any]:
+    payload = _request_payload(event)
+    session, profile = _require_session(event)
+    _require_csrf(event, session, profile)
+    _require_payload_context_matches_session(payload, session)
+    password = _password(payload.get("password"))
+    code = _totp_code(payload.get("code"))
+    language = _language(payload.get("language"))
+    username = _clean_string(session.get("email") or session.get("username"))
+    if not username:
+        raise AuthAdminUnauthorized()
+
+    try:
+        auth_response = _cognito_client().initiate_auth(
+            ClientId=profile["clientId"],
+            AuthFlow="USER_PASSWORD_AUTH",
+            AuthParameters={
+                "USERNAME": username,
+                "PASSWORD": password,
+            },
+            ClientMetadata=_client_metadata(session["domain"], profile, language),
+        )
+    except Exception as exc:
+        _log("WARNING", "Cognito MFA disable reauth failed", domain=session["domain"], authProfileId=profile["authProfileId"], errorType=type(exc).__name__)
+        raise AuthAdminUnauthorized("MFA disable failed") from exc
+
+    challenge_name = _clean_string(auth_response.get("ChallengeName"))
+    if challenge_name:
+        if challenge_name != "SOFTWARE_TOKEN_MFA":
+            raise AuthAdminUnauthorized("MFA disable requires an unsupported challenge")
+        challenge_session = _clean_string(auth_response.get("Session"))
+        challenge_parameters = auth_response.get("ChallengeParameters") if isinstance(auth_response.get("ChallengeParameters"), dict) else {}
+        challenge_username = _clean_string(challenge_parameters.get("USER_ID_FOR_SRP") or challenge_parameters.get("USERNAME") or username)
+        if not challenge_session or not challenge_username:
+            raise AuthAdminUnauthorized("MFA disable failed")
+        try:
+            auth_response = _cognito_client().respond_to_auth_challenge(
+                ClientId=profile["clientId"],
+                ChallengeName="SOFTWARE_TOKEN_MFA",
+                Session=challenge_session,
+                ChallengeResponses={
+                    "USERNAME": challenge_username,
+                    "SOFTWARE_TOKEN_MFA_CODE": code,
+                },
+                ClientMetadata=_client_metadata(session["domain"], profile, language),
+            )
+        except Exception as exc:
+            _log("WARNING", "Cognito MFA disable challenge failed", domain=session["domain"], authProfileId=profile["authProfileId"], errorType=type(exc).__name__)
+            raise AuthAdminUnauthorized("MFA disable failed") from exc
+
+    auth_result = auth_response.get("AuthenticationResult") if isinstance(auth_response.get("AuthenticationResult"), dict) else {}
+    id_token = _clean_string(auth_result.get("IdToken"))
+    access_token = _clean_string(auth_result.get("AccessToken"))
+    if not id_token or not access_token:
+        raise AuthAdminUnauthorized("MFA disable failed")
+    claims = _verify_jwt(id_token, profile)
+    if not _claims_allowed_for_profile(claims, profile) or _clean_string(claims.get("sub")) != _clean_string(session.get("subject")):
+        raise AuthAdminUnauthorized("MFA disable failed")
+
+    try:
+        _cognito_client().set_user_mfa_preference(
+            AccessToken=access_token,
+            SoftwareTokenMfaSettings={
+                "Enabled": False,
+                "PreferredMfa": False,
+            },
+        )
+    except Exception as exc:
+        _log("WARNING", "Cognito MFA disable preference update failed", domain=session["domain"], authProfileId=profile["authProfileId"], errorType=type(exc).__name__)
+        raise AuthAdminUnauthorized("MFA disable failed") from exc
+
+    return _json_response(200, {
+        "ok": True,
+        "domain": session["domain"],
+        "authProfileId": profile["authProfileId"],
+        "status": "mfa-disabled",
+        "account": _public_account(session, profile),
+        "session": _public_session(session, profile),
+    })
 
 
 def _complete_challenge_response(record: dict[str, Any], profile: dict[str, Any], response: dict[str, Any]) -> dict[str, Any]:
@@ -1086,14 +1172,63 @@ def _public_challenge_parameters(parameters: dict[str, Any]) -> dict[str, Any]:
 
 
 def _totp_otpauth_uri(profile: dict[str, Any], username: str, secret_code: str) -> str:
-    issuer = "Zoolanding"
-    label = f"{profile['domain']}:{username}"
+    issuer = _totp_issuer(profile)
+    account_name = _totp_account_name(profile, username, issuer)
+    label = f"{issuer}:{account_name}" if issuer else account_name
     return (
         f"otpauth://totp/{quote(label, safe='')}"
         f"?secret={quote(secret_code, safe='')}"
         f"&issuer={quote(issuer, safe='')}"
         "&algorithm=SHA1&digits=6&period=30"
     )
+
+
+def _totp_issuer(profile: dict[str, Any]) -> str:
+    totp = _totp_config(profile)
+    fallback = _clean_string(profile.get("displayName") or profile.get("domain") or "Zoolanding")
+    return _totp_text(totp.get("issuer"), fallback, "mfa.totp.issuer", max_length=64)
+
+
+def _totp_account_name(profile: dict[str, Any], username: str, issuer: str) -> str:
+    totp = _totp_config(profile)
+    template = _totp_text(totp.get("accountLabelTemplate"), "{username}", "mfa.totp.accountLabelTemplate", max_length=160)
+    context = {
+        "issuer": issuer,
+        "domain": _clean_string(profile.get("domain")),
+        "authProfileId": _clean_string(profile.get("authProfileId")),
+        "tenantId": _clean_string(profile.get("tenantId")),
+        "username": _clean_string(username),
+        "email": _clean_string(username),
+    }
+    rendered = TOTP_TEMPLATE_RE.sub(lambda match: context[match.group(1)], template).strip()
+    return _totp_text(rendered, _clean_string(username), "mfa.totp.accountLabelTemplate", max_length=160)
+
+
+def _totp_friendly_device_name(profile: dict[str, Any]) -> str:
+    totp = _totp_config(profile)
+    return _totp_text(totp.get("friendlyDeviceName"), f"{_totp_issuer(profile)} authenticator", "mfa.totp.friendlyDeviceName", max_length=128)
+
+
+def _totp_config(profile: dict[str, Any]) -> dict[str, Any]:
+    mfa = profile.get("mfa") if isinstance(profile.get("mfa"), dict) else {}
+    totp = mfa.get("totp") if isinstance(mfa.get("totp"), dict) else {}
+    for key in ("issuer", "accountLabelTemplate", "friendlyDeviceName"):
+        if key in totp:
+            _totp_text(totp.get(key), "", f"mfa.totp.{key}", max_length=160)
+    template = _clean_string(totp.get("accountLabelTemplate"))
+    unknown = [key for key in TOTP_TEMPLATE_RE.findall(template) if key not in TOTP_TEMPLATE_KEYS]
+    if unknown:
+        raise AuthAdminConfigError(f"mfa.totp.accountLabelTemplate has unsupported placeholder {unknown[0]}")
+    return totp
+
+
+def _totp_text(value: Any, fallback: str, field_name: str, *, max_length: int) -> str:
+    text = _clean_string(value)
+    if not text:
+        text = fallback
+    if CONTROL_CHAR_RE.search(text) or len(text) > max_length:
+        raise AuthAdminConfigError(f"{field_name} is invalid")
+    return text
 
 
 def _write_audit(profile: dict[str, Any], actor: dict[str, Any], event_type: str, target_subject: str, details: dict[str, Any]) -> None:
