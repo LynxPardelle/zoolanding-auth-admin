@@ -88,6 +88,7 @@ class FakeCognito:
         respond_error=None,
         associate_error=None,
         verify_error=None,
+        preference_error=None,
     ):
         self.calls = []
         self.groups_by_username = groups_by_username or {}
@@ -96,6 +97,7 @@ class FakeCognito:
         self.respond_error = respond_error
         self.associate_error = associate_error
         self.verify_error = verify_error
+        self.preference_error = preference_error
 
     def initiate_auth(self, **kwargs):
         self.calls.append(("initiate_auth", kwargs))
@@ -136,6 +138,12 @@ class FakeCognito:
             "Status": "SUCCESS",
             "Session": "verified-session",
         }
+
+    def set_user_mfa_preference(self, **kwargs):
+        self.calls.append(("set_user_mfa_preference", kwargs))
+        if self.preference_error:
+            raise self.preference_error
+        return {}
 
     def admin_list_groups_for_user(self, **kwargs):
         self.calls.append(("admin_list_groups_for_user", kwargs))
@@ -211,7 +219,7 @@ class FakeDynamo:
 
 
 class AuthAdminHandlerTests(unittest.TestCase):
-    def run_with_fakes(self, event, *, claims=None, fake_dynamo=None, fake_cognito=None, env=None):
+    def run_with_fakes(self, event, *, claims=None, fake_dynamo=None, fake_cognito=None, env=None, random_values=None):
         fake_dynamo = fake_dynamo or FakeDynamo()
         fake_cognito = fake_cognito or FakeCognito()
         claims = claims or {
@@ -235,7 +243,7 @@ class AuthAdminHandlerTests(unittest.TestCase):
                 patch.object(auth_admin, "_cognito_client", return_value=fake_cognito), \
                 patch.object(auth_admin, "_session_store", return_value=fake_dynamo), \
                 patch.object(auth_admin, "_verify_jwt", return_value=claims), \
-                patch.object(auth_admin, "_random_urlsafe", side_effect=["session-value", "csrf-value"]), \
+                patch.object(auth_admin, "_random_urlsafe", side_effect=random_values or ["session-value", "csrf-value"]), \
                 patch.object(auth_admin, "_now_epoch", return_value=1_800_000_000):
             response = auth_admin.lambda_handler(event, object())
         return response, fake_dynamo, fake_cognito
@@ -509,6 +517,101 @@ class AuthAdminHandlerTests(unittest.TestCase):
             },
         }), fake_cognito.calls)
         self.assertNotIn("associated-session", json.dumps(verify_body))
+
+    def test_authenticated_user_can_enroll_totp_without_browser_tokens(self):
+        _, fake_dynamo, _, session_value, csrf_value = self.sign_in()
+        fake_cognito = FakeCognito(auth_response={
+            "AuthenticationResult": {
+                "IdToken": "reauth-id-token",
+                "AccessToken": "server-only-access-token",
+                "RefreshToken": "server-only-refresh-token",
+            }
+        })
+
+        setup_response, _, fake_cognito = self.run_with_fakes(
+            http_event("POST", "/auth/session/mfa/enroll/start", {
+                "domain": "zoositioweb.com.mx",
+                "authProfileId": "staff",
+                "password": "ValidPass123!",
+                "language": "es",
+            }, headers={"x-zlp-csrf": csrf_value}, cookies=[f"__Host-zlp_session={session_value}", f"zlp_csrf={csrf_value}"]),
+            fake_dynamo=fake_dynamo,
+            fake_cognito=fake_cognito,
+            random_values=["mfa-enroll-value", "mfa-enroll-csrf"],
+        )
+
+        setup_body = body(setup_response)
+        self.assertEqual(setup_response["statusCode"], 200)
+        self.assertEqual(setup_body["status"], "mfa-enrollment-ready")
+        self.assertEqual(setup_body["setup"]["sharedSecret"], "ABCDEFGHIJKLMNOP")
+        self.assertIn("otpauth://totp/", setup_body["setup"]["otpauthUri"])
+        self.assertNotIn("server-only-access-token", json.dumps(setup_body))
+        self.assertNotIn("server-only-refresh-token", json.dumps(setup_body))
+        self.assertIn(("associate_software_token", {
+            "AccessToken": "server-only-access-token",
+        }), fake_cognito.calls)
+        setup_cookies = "\n".join(setup_response.get("cookies") or [])
+        self.assertIn("__Host-zlp_mfa_enroll=mfa-enroll-value; HttpOnly; Secure; SameSite=Lax; Path=/", setup_cookies)
+        self.assertIn("zlp_mfa_enroll_csrf=mfa-enroll-csrf; Secure; SameSite=Lax; Path=/", setup_cookies)
+        enrollment_record = fake_dynamo.sessions[auth_admin._sha256("mfa-enroll-value")]
+        self.assertEqual(enrollment_record["recordType"], "authMfaEnrollment")
+        self.assertEqual(enrollment_record["cognitoAccessToken"], "server-only-access-token")
+        self.assertEqual(enrollment_record["subject"], "client-sub")
+
+        verify_response, _, fake_cognito = self.run_with_fakes(
+            http_event("POST", "/auth/session/mfa/enroll/verify", {
+                "domain": "zoositioweb.com.mx",
+                "authProfileId": "staff",
+                "code": "123456",
+            }, headers={"x-zlp-csrf": "mfa-enroll-csrf"}, cookies=[
+                f"__Host-zlp_session={session_value}",
+                f"zlp_csrf={csrf_value}",
+                "__Host-zlp_mfa_enroll=mfa-enroll-value",
+                "zlp_mfa_enroll_csrf=mfa-enroll-csrf",
+            ]),
+            fake_dynamo=fake_dynamo,
+            fake_cognito=fake_cognito,
+            random_values=[],
+        )
+
+        verify_body = body(verify_response)
+        self.assertEqual(verify_response["statusCode"], 200)
+        self.assertEqual(verify_body["status"], "mfa-enabled")
+        self.assertEqual(verify_body["account"]["subject"], "client-sub")
+        self.assertIn(("verify_software_token", {
+            "AccessToken": "server-only-access-token",
+            "UserCode": "123456",
+            "FriendlyDeviceName": "Zoolanding authenticator",
+        }), fake_cognito.calls)
+        self.assertIn(("set_user_mfa_preference", {
+            "AccessToken": "server-only-access-token",
+            "SoftwareTokenMfaSettings": {
+                "Enabled": True,
+                "PreferredMfa": True,
+            },
+        }), fake_cognito.calls)
+        self.assertNotIn("server-only-access-token", json.dumps(verify_body))
+        self.assertNotIn("server-only-refresh-token", json.dumps(verify_body))
+        cleared_cookies = "\n".join(verify_response.get("cookies") or [])
+        self.assertIn("__Host-zlp_mfa_enroll=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0", cleared_cookies)
+        self.assertIn("zlp_mfa_enroll_csrf=; Secure; SameSite=Lax; Path=/; Max-Age=0", cleared_cookies)
+        self.assertTrue(fake_dynamo.sessions[auth_admin._sha256("mfa-enroll-value")]["revokedAt"])
+
+    def test_voluntary_mfa_enrollment_requires_active_session_csrf_and_password(self):
+        _, fake_dynamo, _, session_value, csrf_value = self.sign_in()
+
+        response, _, fake_cognito = self.run_with_fakes(
+            http_event("POST", "/auth/session/mfa/enroll/start", {
+                "domain": "zoositioweb.com.mx",
+                "authProfileId": "staff",
+                "password": "ValidPass123!",
+            }, cookies=[f"__Host-zlp_session={session_value}", f"zlp_csrf={csrf_value}"]),
+            fake_dynamo=fake_dynamo,
+        )
+
+        self.assertEqual(response["statusCode"], 403)
+        self.assertEqual(body(response)["error"], "CSRF validation failed")
+        self.assertEqual(fake_cognito.calls, [])
 
     def test_me_returns_sanitized_account_for_pending_user(self):
         _, fake_dynamo, _, session_value, _ = self.sign_in()
@@ -1021,6 +1124,7 @@ class AuthAdminHandlerTests(unittest.TestCase):
         for action in (
             "cognito-idp:AssociateSoftwareToken",
             "cognito-idp:RespondToAuthChallenge",
+            "cognito-idp:SetUserMFAPreference",
             "cognito-idp:VerifySoftwareToken",
         ):
             self.assertIn(action, template)

@@ -11,6 +11,7 @@ It adds private session, account, and user-management workflows on top of Cognit
 - No JWT, ID token, access token, or refresh token is returned to the browser; raw Cognito challenge sessions are also server-only.
 - Sign-in creates a server-side session and returns only sanitized metadata.
 - Cognito `SOFTWARE_TOKEN_MFA` and `MFA_SETUP` challenges store raw Cognito `Session` values server-side behind a short-lived challenge cookie.
+- Voluntary TOTP enrollment for an already signed-in user stores the temporary Cognito access token server-side only behind a short-lived enrollment cookie while the setup code is verified.
 - This BFF currently creates sessions through custom sign-in. Cognito Managed Login / Hosted UI can remain enabled for drafts that prefer it, but Hosted UI sessions do not become BFF HttpOnly sessions unless a future server-side callback/token-exchange endpoint is added.
 - Requests after sign-in must carry `X-ZLP-Domain` and `X-ZLP-Auth-Profile-Id`; the Lambda compares them with the private session before returning account/admin data.
 - The session cookie is `__Host-zlp_session` with `HttpOnly`, `Secure`, `SameSite=Lax`, and `Path=/`.
@@ -27,6 +28,8 @@ It adds private session, account, and user-management workflows on top of Cognit
 - `POST /auth/session/challenge/respond`
 - `POST /auth/session/mfa/setup`
 - `POST /auth/session/mfa/verify`
+- `POST /auth/session/mfa/enroll/start`
+- `POST /auth/session/mfa/enroll/verify`
 - `GET /auth/session/me`
 - `POST /auth/session/logout`
 - `GET /auth/admin/users`
@@ -73,7 +76,10 @@ Deployments pass a base64-encoded JSON config through `AuthAdminConfigJsonBase64
         "challengeRespondPath": "/auth/session/challenge/respond",
         "mfaSetupPath": "/auth/session/mfa/setup",
         "mfaVerifyPath": "/auth/session/mfa/verify",
-        "challengeCsrfCookieName": "zlp_challenge_csrf"
+        "mfaEnrollStartPath": "/auth/session/mfa/enroll/start",
+        "mfaEnrollVerifyPath": "/auth/session/mfa/enroll/verify",
+        "challengeCsrfCookieName": "zlp_challenge_csrf",
+        "mfaEnrollCsrfCookieName": "zlp_mfa_enroll_csrf"
       }
     }
   ]
