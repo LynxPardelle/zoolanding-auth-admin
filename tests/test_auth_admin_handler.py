@@ -380,6 +380,61 @@ class AuthAdminHandlerTests(unittest.TestCase):
         self.assertIn("__Host-zlp_challenge=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0", "\n".join(response.get("cookies") or []))
         self.assertIn("zlp_challenge_csrf=; Secure; SameSite=Lax; Path=/; Max-Age=0", "\n".join(response.get("cookies") or []))
 
+    def test_software_token_mfa_challenge_reports_environment_mismatch(self):
+        challenge_response = {
+            "ChallengeName": "SOFTWARE_TOKEN_MFA",
+            "ChallengeParameters": {"USER_ID_FOR_SRP": "client-cognito-username"},
+            "Session": "raw-cognito-session",
+        }
+        _, fake_dynamo, _ = self.run_with_fakes(
+            http_event("POST", "/auth/session/signin", {
+                "domain": "zoositioweb.com.mx",
+                "authProfileId": "staff",
+                "email": "client@example.test",
+                "password": "ValidPass123!",
+            }),
+            fake_cognito=FakeCognito(auth_response=challenge_response),
+        )
+        claims = {
+            "sub": "client-sub",
+            "email": "client@example.test",
+            "iss": "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_pool",
+            "aud": "public-client-id",
+            "token_use": "id",
+            "custom:tenant_id": "zoosite",
+            "custom:zoolanding_env": "prod",
+            "cognito:groups": ["zoosite-client"],
+            "exp": 4102444800,
+        }
+
+        response, _, fake_cognito = self.run_with_fakes(
+            http_event("POST", "/auth/session/challenge/respond", {
+                "domain": "zoositioweb.com.mx",
+                "authProfileId": "staff",
+                "code": "123456",
+            }, headers={"x-zlp-csrf": "csrf-value"}, cookies=["__Host-zlp_challenge=session-value", "zlp_challenge_csrf=csrf-value"]),
+            fake_dynamo=fake_dynamo,
+            claims=claims,
+        )
+
+        self.assertEqual(response["statusCode"], 403)
+        self.assertEqual(body(response)["error"], "Account does not belong to this environment")
+        self.assertEqual(body(response)["errorCode"], "auth_environment_mismatch")
+        self.assertEqual([call[0] for call in fake_cognito.calls], ["respond_to_auth_challenge"])
+
+    def test_software_token_mfa_challenge_reports_expired_challenge_code(self):
+        response, _, _ = self.run_with_fakes(
+            http_event("POST", "/auth/session/challenge/respond", {
+                "domain": "zoositioweb.com.mx",
+                "authProfileId": "staff",
+                "code": "123456",
+            }),
+        )
+
+        self.assertEqual(response["statusCode"], 401)
+        self.assertEqual(body(response)["error"], "Authentication challenge expired")
+        self.assertEqual(body(response)["errorCode"], "auth_challenge_expired")
+
     def test_software_token_mfa_challenge_requires_challenge_csrf(self):
         challenge_response = {
             "ChallengeName": "SOFTWARE_TOKEN_MFA",
@@ -1170,8 +1225,9 @@ class AuthAdminHandlerTests(unittest.TestCase):
             "password": "ValidPass123!",
         }), claims=claims)
 
-        self.assertEqual(response["statusCode"], 401)
-        self.assertEqual(body(response)["error"], "Sign-in failed")
+        self.assertEqual(response["statusCode"], 403)
+        self.assertEqual(body(response)["error"], "Account does not belong to this environment")
+        self.assertEqual(body(response)["errorCode"], "auth_environment_mismatch")
 
     def test_signin_rejects_non_id_token_claims(self):
         claims = {
