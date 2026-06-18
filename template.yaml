@@ -221,6 +221,13 @@ Resources:
               Ref: AuthAdminApi
             Method: POST
             Path: /auth/session/mfa/enroll/verify
+        SessionMfaDisable:
+          Type: HttpApi
+          Properties:
+            ApiId:
+              Ref: AuthAdminApi
+            Method: POST
+            Path: /auth/session/mfa/disable
         SessionMe:
           Type: HttpApi
           Properties:
