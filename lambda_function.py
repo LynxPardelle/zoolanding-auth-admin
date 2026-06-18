@@ -8,10 +8,13 @@ import re
 import secrets
 import time
 from typing import Any, Optional
+from urllib.parse import quote
 
 
 SESSION_COOKIE_NAME = "__Host-zlp_session"
+CHALLENGE_COOKIE_NAME = "__Host-zlp_challenge"
 CSRF_COOKIE_NAME = "zlp_csrf"
+CHALLENGE_CSRF_COOKIE_NAME = "zlp_challenge_csrf"
 CONTEXT_DOMAIN_HEADER = "x-zlp-domain"
 CONTEXT_AUTH_PROFILE_HEADER = "x-zlp-auth-profile-id"
 CONFIG_ENV_BASE64 = "AUTH_ADMIN_CONFIG_JSON_BASE64"
@@ -21,8 +24,10 @@ SESSION_TABLE_ENV = "AUTH_ADMIN_SESSION_TABLE_NAME"
 USER_STATE_TABLE_ENV = "AUTH_ADMIN_USER_STATE_TABLE_NAME"
 AUDIT_TABLE_ENV = "AUTH_ADMIN_AUDIT_TABLE_NAME"
 DEFAULT_SESSION_SECONDS = 12 * 60 * 60
+DEFAULT_CHALLENGE_SECONDS = 5 * 60
 AUTH_ENVIRONMENTS = {"dev", "test", "prod"}
 APPROVAL_STATUSES = {"pending", "approved", "rejected", "suspended"}
+SUPPORTED_CHALLENGES = {"SOFTWARE_TOKEN_MFA", "MFA_SETUP"}
 SECRET_KEY_FRAGMENTS = (
     "secret",
     "token",
@@ -87,6 +92,12 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
 
         if path == "/auth/session/signin" and method == "POST":
             return _signin_response(_request_payload(event))
+        if path == "/auth/session/challenge/respond" and method == "POST":
+            return _respond_challenge_response(event)
+        if path == "/auth/session/mfa/setup" and method == "POST":
+            return _mfa_setup_response(event)
+        if path == "/auth/session/mfa/verify" and method == "POST":
+            return _mfa_verify_response(event)
         if path == "/auth/session/me" and method == "GET":
             session, profile = _require_session(event)
             return _json_response(200, {
@@ -232,15 +243,20 @@ def _signin_response(payload: dict[str, Any]) -> dict[str, Any]:
 
     challenge = _clean_string(response.get("ChallengeName"))
     if challenge:
-        return _json_response(200, {
-            "ok": True,
-            "domain": domain,
-            "authProfileId": profile["authProfileId"],
-            "status": "challenge-required",
-            "challengeName": challenge,
-        })
+        return _create_challenge_response(domain, profile, response, username=email)
 
     auth_result = response.get("AuthenticationResult") if isinstance(response.get("AuthenticationResult"), dict) else {}
+    return _create_private_session_response(domain, profile, auth_result, username=email)
+
+
+def _create_private_session_response(
+    domain: str,
+    profile: dict[str, Any],
+    auth_result: dict[str, Any],
+    *,
+    username: str,
+    clear_challenge: bool = False,
+) -> dict[str, Any]:
     id_token = _clean_string(auth_result.get("IdToken"))
     if not id_token:
         raise AuthAdminUnauthorized("Sign-in failed")
@@ -267,9 +283,9 @@ def _signin_response(payload: dict[str, Any]) -> dict[str, Any]:
         "clientId": profile["clientId"],
         "tenantId": profile["tenantId"],
         "subject": user_state["subject"],
-        "username": user_state.get("username") or email,
-        "email": user_state.get("email") or email,
-        "emailHash": _sha256(user_state.get("email") or email),
+        "username": user_state.get("username") or username,
+        "email": user_state.get("email") or username,
+        "emailHash": _sha256(user_state.get("email") or username),
         "roles": user_state.get("roles") or [],
         "approvalStatus": user_state.get("approvalStatus") or profile["defaultUserStatus"],
         "enabled": user_state.get("enabled", True) is True,
@@ -292,7 +308,190 @@ def _signin_response(payload: dict[str, Any]) -> dict[str, Any]:
     }, cookies=[
         _cookie(SESSION_COOKIE_NAME, session_value, http_only=True, max_age=max_age),
         _cookie(_csrf_cookie_name(profile), csrf_value, http_only=False, max_age=max_age),
+        *([
+            _cookie(CHALLENGE_COOKIE_NAME, "", http_only=True, max_age=0),
+            _cookie(_challenge_csrf_cookie_name(profile), "", http_only=False, max_age=0),
+        ] if clear_challenge else []),
     ])
+
+
+def _create_challenge_response(
+    domain: str,
+    profile: dict[str, Any],
+    response: dict[str, Any],
+    *,
+    username: str,
+) -> dict[str, Any]:
+    challenge_name = _clean_string(response.get("ChallengeName"))
+    if challenge_name not in SUPPORTED_CHALLENGES:
+        raise AuthAdminUnauthorized("Sign-in requires an unsupported challenge")
+    cognito_session = _clean_string(response.get("Session"))
+    if not cognito_session:
+        raise AuthAdminUnauthorized("Sign-in failed")
+    challenge_parameters = response.get("ChallengeParameters") if isinstance(response.get("ChallengeParameters"), dict) else {}
+    challenge_username = _clean_string(challenge_parameters.get("USER_ID_FOR_SRP") or challenge_parameters.get("USERNAME") or username)
+    if not challenge_username:
+        raise AuthAdminUnauthorized("Sign-in failed")
+
+    challenge_value = _random_urlsafe(32)
+    challenge_csrf_value = _random_urlsafe(32)
+    now = _now_epoch()
+    max_age = DEFAULT_CHALLENGE_SECONDS
+    record = {
+        "sessionIdHash": _sha256(challenge_value),
+        "challengeCsrfHash": _sha256(challenge_csrf_value),
+        "recordType": "authChallenge",
+        "tenantProfileKey": _tenant_profile_key(profile),
+        "domain": domain,
+        "authProfileId": profile["authProfileId"],
+        "environment": profile["environment"],
+        "userPoolId": profile["userPoolId"],
+        "clientId": profile["clientId"],
+        "username": challenge_username,
+        "emailHash": _sha256(username),
+        "challengeName": challenge_name,
+        "cognitoSession": cognito_session,
+        "challengeParameters": _public_challenge_parameters(challenge_parameters),
+        "createdAt": now,
+        "expiresAt": now + max_age,
+        "revokedAt": None,
+    }
+    _session_store(profile).put_session(record)
+    return _json_response(200, {
+        "ok": True,
+        "domain": domain,
+        "authProfileId": profile["authProfileId"],
+        "status": "challenge-required",
+        "challengeName": challenge_name,
+        "challengeParameters": record["challengeParameters"],
+    }, cookies=[
+        _cookie(CHALLENGE_COOKIE_NAME, challenge_value, http_only=True, max_age=max_age),
+        _cookie(_challenge_csrf_cookie_name(profile), challenge_csrf_value, http_only=False, max_age=max_age),
+    ])
+
+
+def _respond_challenge_response(event: dict[str, Any]) -> dict[str, Any]:
+    payload = _request_payload(event)
+    record, profile = _require_challenge(event, payload, expected_challenge="SOFTWARE_TOKEN_MFA")
+    code = _totp_code(payload.get("code"))
+    try:
+        response = _cognito_client().respond_to_auth_challenge(
+            ClientId=profile["clientId"],
+            ChallengeName="SOFTWARE_TOKEN_MFA",
+            Session=record["cognitoSession"],
+            ChallengeResponses={
+                "USERNAME": record["username"],
+                "SOFTWARE_TOKEN_MFA_CODE": code,
+            },
+            ClientMetadata=_client_metadata(record["domain"], profile, ""),
+        )
+    except Exception as exc:
+        _log("WARNING", "Cognito MFA challenge failed", domain=record["domain"], authProfileId=profile["authProfileId"], errorType=type(exc).__name__)
+        raise AuthAdminUnauthorized("Authentication challenge failed") from exc
+    return _complete_challenge_response(record, profile, response)
+
+
+def _mfa_setup_response(event: dict[str, Any]) -> dict[str, Any]:
+    payload = _request_payload(event)
+    record, profile = _require_challenge(event, payload, expected_challenge="MFA_SETUP")
+    try:
+        response = _cognito_client().associate_software_token(Session=record["cognitoSession"])
+    except Exception as exc:
+        _log("WARNING", "Cognito MFA setup failed", domain=record["domain"], authProfileId=profile["authProfileId"], errorType=type(exc).__name__)
+        raise AuthAdminUnauthorized("Authentication challenge failed") from exc
+    secret_code = _clean_string(response.get("SecretCode"))
+    next_session = _clean_string(response.get("Session"))
+    if not secret_code or not next_session:
+        raise AuthAdminUnauthorized("MFA setup failed")
+    updated = dict(record)
+    updated.update({
+        "cognitoSession": next_session,
+        "mfaSetupStartedAt": _now_epoch(),
+    })
+    _session_store(profile).put_session(updated)
+    return _json_response(200, {
+        "ok": True,
+        "domain": record["domain"],
+        "authProfileId": profile["authProfileId"],
+        "status": "mfa-setup-ready",
+        "setup": {
+            "method": "software-token",
+            "sharedSecret": secret_code,
+            "otpauthUri": _totp_otpauth_uri(profile, record["username"], secret_code),
+        },
+    })
+
+
+def _mfa_verify_response(event: dict[str, Any]) -> dict[str, Any]:
+    payload = _request_payload(event)
+    record, profile = _require_challenge(event, payload, expected_challenge="MFA_SETUP")
+    code = _totp_code(payload.get("code"))
+    try:
+        response = _cognito_client().verify_software_token(
+            Session=record["cognitoSession"],
+            UserCode=code,
+            FriendlyDeviceName="Zoolanding authenticator",
+        )
+    except Exception as exc:
+        _log("WARNING", "Cognito MFA verification failed", domain=record["domain"], authProfileId=profile["authProfileId"], errorType=type(exc).__name__)
+        raise AuthAdminUnauthorized("Authentication challenge failed") from exc
+    if _clean_string(response.get("Status")) != "SUCCESS":
+        raise AuthAdminUnauthorized("MFA verification failed")
+    verified_session = _clean_string(response.get("Session"))
+    if not verified_session:
+        raise AuthAdminUnauthorized("MFA verification failed")
+    try:
+        challenge_response = _cognito_client().respond_to_auth_challenge(
+            ClientId=profile["clientId"],
+            ChallengeName="MFA_SETUP",
+            Session=verified_session,
+            ChallengeResponses={
+                "USERNAME": record["username"],
+            },
+            ClientMetadata=_client_metadata(record["domain"], profile, ""),
+        )
+    except Exception as exc:
+        _log("WARNING", "Cognito MFA setup challenge failed", domain=record["domain"], authProfileId=profile["authProfileId"], errorType=type(exc).__name__)
+        raise AuthAdminUnauthorized("Authentication challenge failed") from exc
+    return _complete_challenge_response(record, profile, challenge_response)
+
+
+def _complete_challenge_response(record: dict[str, Any], profile: dict[str, Any], response: dict[str, Any]) -> dict[str, Any]:
+    next_challenge = _clean_string(response.get("ChallengeName"))
+    if next_challenge:
+        if next_challenge not in SUPPORTED_CHALLENGES:
+            raise AuthAdminUnauthorized("Authentication challenge failed")
+        next_session = _clean_string(response.get("Session"))
+        if not next_session:
+            raise AuthAdminUnauthorized("Authentication challenge failed")
+        updated = dict(record)
+        updated.update({
+            "challengeName": next_challenge,
+            "cognitoSession": next_session,
+            "challengeParameters": _public_challenge_parameters(
+                response.get("ChallengeParameters") if isinstance(response.get("ChallengeParameters"), dict) else {}
+            ),
+            "updatedAt": _now_epoch(),
+        })
+        _session_store(profile).put_session(updated)
+        return _json_response(200, {
+            "ok": True,
+            "domain": record["domain"],
+            "authProfileId": profile["authProfileId"],
+            "status": "challenge-required",
+            "challengeName": next_challenge,
+            "challengeParameters": updated["challengeParameters"],
+        })
+
+    auth_result = response.get("AuthenticationResult") if isinstance(response.get("AuthenticationResult"), dict) else {}
+    _session_store(profile).revoke_session(record["sessionIdHash"], _now_epoch())
+    return _create_private_session_response(
+        record["domain"],
+        profile,
+        auth_result,
+        username=record["username"],
+        clear_challenge=True,
+    )
 
 
 def _logout_response(event: dict[str, Any]) -> dict[str, Any]:
@@ -408,6 +607,41 @@ def _require_session(event: dict[str, Any], *, allow_inactive: bool = False) -> 
     return _refresh_session_from_user_state(session, profile, allow_inactive=allow_inactive), profile
 
 
+def _require_challenge(
+    event: dict[str, Any],
+    payload: dict[str, Any],
+    *,
+    expected_challenge: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    challenge_value = _cookie_value(event, CHALLENGE_COOKIE_NAME)
+    if not challenge_value:
+        raise AuthAdminUnauthorized("Authentication challenge expired")
+    try:
+        domain, auth_profile_id = _payload_profile_context(payload)
+        profile = _profile_for(domain, auth_profile_id)
+    except AuthAdminError as exc:
+        raise AuthAdminUnauthorized("Authentication challenge expired") from exc
+    record = _session_store(profile).get_session(_sha256(challenge_value))
+    if not record:
+        raise AuthAdminUnauthorized("Authentication challenge expired")
+    if record.get("recordType") != "authChallenge":
+        raise AuthAdminUnauthorized("Authentication challenge expired")
+    if record.get("revokedAt"):
+        raise AuthAdminUnauthorized("Authentication challenge expired")
+    if int(record.get("expiresAt") or 0) <= _now_epoch():
+        raise AuthAdminUnauthorized("Authentication challenge expired")
+    if record.get("tenantProfileKey") != _tenant_profile_key(profile):
+        raise AuthAdminUnauthorized("Authentication challenge expired")
+    if record.get("domain") != domain or record.get("authProfileId") != auth_profile_id:
+        raise AuthAdminUnauthorized("Authentication challenge expired")
+    if _clean_string(record.get("challengeName")) != expected_challenge:
+        raise AuthAdminError("Authentication challenge type does not match")
+    if not _clean_string(record.get("cognitoSession")) or not _clean_string(record.get("username")):
+        raise AuthAdminUnauthorized("Authentication challenge expired")
+    _require_challenge_csrf(event, record, profile)
+    return record, profile
+
+
 def _require_admin_session(event: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     session, profile = _require_session(event)
     if session.get("approvalStatus") != "approved" or session.get("enabled") is not True:
@@ -456,6 +690,15 @@ def _require_csrf(event: dict[str, Any], session: dict[str, Any], profile: dict[
         raise AuthAdminForbidden("CSRF validation failed")
 
 
+def _require_challenge_csrf(event: dict[str, Any], record: dict[str, Any], profile: dict[str, Any]) -> None:
+    header_value = _header(event, _csrf_header_name(profile))
+    cookie_value = _cookie_value(event, _challenge_csrf_cookie_name(profile))
+    if not header_value or not cookie_value or not hmac.compare_digest(header_value, cookie_value):
+        raise AuthAdminForbidden("CSRF validation failed")
+    if not hmac.compare_digest(_sha256(header_value), str(record.get("challengeCsrfHash") or "")):
+        raise AuthAdminForbidden("CSRF validation failed")
+
+
 def _profile_for(domain: str, auth_profile_id: str) -> dict[str, Any]:
     matches = [
         profile
@@ -478,10 +721,20 @@ def _request_profile_context(event: dict[str, Any]) -> tuple[str, str]:
     return _domain(domain), _safe_id(auth_profile_id)
 
 
+def _payload_profile_context(payload: dict[str, Any]) -> tuple[str, str]:
+    return _domain(payload.get("domain")), _safe_id(payload.get("authProfileId"))
+
+
 def _csrf_cookie_name(profile: Optional[dict[str, Any]]) -> str:
     session_config = profile.get("session") if isinstance(profile, dict) and isinstance(profile.get("session"), dict) else {}
     value = _clean_string(session_config.get("csrfCookieName") if isinstance(session_config, dict) else "")
     return value if re.fullmatch(r"[A-Za-z0-9._-]{1,64}", value) else CSRF_COOKIE_NAME
+
+
+def _challenge_csrf_cookie_name(profile: Optional[dict[str, Any]]) -> str:
+    session_config = profile.get("session") if isinstance(profile, dict) and isinstance(profile.get("session"), dict) else {}
+    value = _clean_string(session_config.get("challengeCsrfCookieName") if isinstance(session_config, dict) else "")
+    return value if re.fullmatch(r"[A-Za-z0-9._-]{1,64}", value) else CHALLENGE_CSRF_COOKIE_NAME
 
 
 def _csrf_header_name(profile: Optional[dict[str, Any]]) -> str:
@@ -630,6 +883,31 @@ def _target_username(user: dict[str, Any]) -> str:
     if not username:
         raise AuthAdminError("Target user is missing username")
     return username
+
+
+def _public_challenge_parameters(parameters: dict[str, Any]) -> dict[str, Any]:
+    output: dict[str, Any] = {}
+    for source_key, target_key in (
+        ("MFAS_CAN_SETUP", "mfasCanSetup"),
+        ("MFAS_CAN_SELECT", "mfasCanSelect"),
+    ):
+        value = parameters.get(source_key)
+        if isinstance(value, list):
+            output[target_key] = [_clean_string(item) for item in value if _clean_string(item)]
+        elif _clean_string(value):
+            output[target_key] = _clean_string(value)
+    return output
+
+
+def _totp_otpauth_uri(profile: dict[str, Any], username: str, secret_code: str) -> str:
+    issuer = "Zoolanding"
+    label = f"{profile['domain']}:{username}"
+    return (
+        f"otpauth://totp/{quote(label, safe='')}"
+        f"?secret={quote(secret_code, safe='')}"
+        f"&issuer={quote(issuer, safe='')}"
+        "&algorithm=SHA1&digits=6&period=30"
+    )
 
 
 def _write_audit(profile: dict[str, Any], actor: dict[str, Any], event_type: str, target_subject: str, details: dict[str, Any]) -> None:
@@ -917,6 +1195,13 @@ def _password(value: Any) -> str:
     if not password or len(password) > 4096 or CONTROL_OR_WHITESPACE_RE.search(password):
         raise AuthAdminError("Invalid password")
     return password
+
+
+def _totp_code(value: Any) -> str:
+    code = _clean_string(value)
+    if not re.fullmatch(r"[0-9]{6}", code):
+        raise AuthAdminError("Invalid MFA code")
+    return code
 
 
 def _language(value: Any) -> str:
