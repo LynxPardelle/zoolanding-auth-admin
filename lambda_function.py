@@ -13,8 +13,10 @@ from urllib.parse import quote
 
 SESSION_COOKIE_NAME = "__Host-zlp_session"
 CHALLENGE_COOKIE_NAME = "__Host-zlp_challenge"
+MFA_ENROLLMENT_COOKIE_NAME = "__Host-zlp_mfa_enroll"
 CSRF_COOKIE_NAME = "zlp_csrf"
 CHALLENGE_CSRF_COOKIE_NAME = "zlp_challenge_csrf"
+MFA_ENROLLMENT_CSRF_COOKIE_NAME = "zlp_mfa_enroll_csrf"
 CONTEXT_DOMAIN_HEADER = "x-zlp-domain"
 CONTEXT_AUTH_PROFILE_HEADER = "x-zlp-auth-profile-id"
 CONFIG_ENV_BASE64 = "AUTH_ADMIN_CONFIG_JSON_BASE64"
@@ -25,6 +27,7 @@ USER_STATE_TABLE_ENV = "AUTH_ADMIN_USER_STATE_TABLE_NAME"
 AUDIT_TABLE_ENV = "AUTH_ADMIN_AUDIT_TABLE_NAME"
 DEFAULT_SESSION_SECONDS = 12 * 60 * 60
 DEFAULT_CHALLENGE_SECONDS = 5 * 60
+DEFAULT_MFA_ENROLLMENT_SECONDS = 5 * 60
 AUTH_ENVIRONMENTS = {"dev", "test", "prod"}
 APPROVAL_STATUSES = {"pending", "approved", "rejected", "suspended"}
 SUPPORTED_CHALLENGES = {"SOFTWARE_TOKEN_MFA", "MFA_SETUP"}
@@ -98,6 +101,10 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             return _mfa_setup_response(event)
         if path == "/auth/session/mfa/verify" and method == "POST":
             return _mfa_verify_response(event)
+        if path == "/auth/session/mfa/enroll/start" and method == "POST":
+            return _mfa_enroll_start_response(event)
+        if path == "/auth/session/mfa/enroll/verify" and method == "POST":
+            return _mfa_enroll_verify_response(event)
         if path == "/auth/session/me" and method == "GET":
             session, profile = _require_session(event)
             return _json_response(200, {
@@ -456,6 +463,136 @@ def _mfa_verify_response(event: dict[str, Any]) -> dict[str, Any]:
     return _complete_challenge_response(record, profile, challenge_response)
 
 
+def _mfa_enroll_start_response(event: dict[str, Any]) -> dict[str, Any]:
+    payload = _request_payload(event)
+    session, profile = _require_session(event)
+    _require_csrf(event, session, profile)
+    _require_payload_context_matches_session(payload, session)
+    password = _password(payload.get("password"))
+    language = _language(payload.get("language"))
+    username = _clean_string(session.get("email") or session.get("username"))
+    if not username:
+        raise AuthAdminUnauthorized()
+
+    try:
+        response = _cognito_client().initiate_auth(
+            ClientId=profile["clientId"],
+            AuthFlow="USER_PASSWORD_AUTH",
+            AuthParameters={
+                "USERNAME": username,
+                "PASSWORD": password,
+            },
+            ClientMetadata=_client_metadata(session["domain"], profile, language),
+        )
+    except Exception as exc:
+        _log("WARNING", "Cognito MFA enrollment reauth failed", domain=session["domain"], authProfileId=profile["authProfileId"], errorType=type(exc).__name__)
+        raise AuthAdminUnauthorized("MFA enrollment failed") from exc
+
+    if _clean_string(response.get("ChallengeName")):
+        raise AuthAdminUnauthorized("MFA enrollment requires a fresh sign-in")
+    auth_result = response.get("AuthenticationResult") if isinstance(response.get("AuthenticationResult"), dict) else {}
+    id_token = _clean_string(auth_result.get("IdToken"))
+    access_token = _clean_string(auth_result.get("AccessToken"))
+    if not id_token or not access_token:
+        raise AuthAdminUnauthorized("MFA enrollment failed")
+    claims = _verify_jwt(id_token, profile)
+    if not _claims_allowed_for_profile(claims, profile) or _clean_string(claims.get("sub")) != _clean_string(session.get("subject")):
+        raise AuthAdminUnauthorized("MFA enrollment failed")
+
+    try:
+        setup_response = _cognito_client().associate_software_token(AccessToken=access_token)
+    except Exception as exc:
+        _log("WARNING", "Cognito voluntary MFA setup failed", domain=session["domain"], authProfileId=profile["authProfileId"], errorType=type(exc).__name__)
+        raise AuthAdminUnauthorized("MFA enrollment failed") from exc
+    secret_code = _clean_string(setup_response.get("SecretCode"))
+    if not secret_code:
+        raise AuthAdminUnauthorized("MFA enrollment failed")
+
+    enrollment_value = _random_urlsafe(32)
+    enrollment_csrf_value = _random_urlsafe(32)
+    now = _now_epoch()
+    max_age = DEFAULT_MFA_ENROLLMENT_SECONDS
+    record = {
+        "sessionIdHash": _sha256(enrollment_value),
+        "mfaEnrollmentCsrfHash": _sha256(enrollment_csrf_value),
+        "recordType": "authMfaEnrollment",
+        "tenantProfileKey": _tenant_profile_key(profile),
+        "domain": session["domain"],
+        "authProfileId": profile["authProfileId"],
+        "environment": profile["environment"],
+        "userPoolId": profile["userPoolId"],
+        "clientId": profile["clientId"],
+        "parentSessionIdHash": session["sessionIdHash"],
+        "subject": session["subject"],
+        "username": username,
+        "emailHash": _sha256(username),
+        "cognitoAccessToken": access_token,
+        "createdAt": now,
+        "expiresAt": now + max_age,
+        "revokedAt": None,
+    }
+    _session_store(profile).put_session(record)
+    return _json_response(200, {
+        "ok": True,
+        "domain": session["domain"],
+        "authProfileId": profile["authProfileId"],
+        "status": "mfa-enrollment-ready",
+        "setup": {
+            "method": "software-token",
+            "sharedSecret": secret_code,
+            "otpauthUri": _totp_otpauth_uri(profile, username, secret_code),
+        },
+    }, cookies=[
+        _cookie(MFA_ENROLLMENT_COOKIE_NAME, enrollment_value, http_only=True, max_age=max_age),
+        _cookie(_mfa_enrollment_csrf_cookie_name(profile), enrollment_csrf_value, http_only=False, max_age=max_age),
+    ])
+
+
+def _mfa_enroll_verify_response(event: dict[str, Any]) -> dict[str, Any]:
+    payload = _request_payload(event)
+    session, profile = _require_session(event)
+    _require_payload_context_matches_session(payload, session)
+    record = _require_mfa_enrollment(event, session, profile)
+    code = _totp_code(payload.get("code"))
+
+    try:
+        response = _cognito_client().verify_software_token(
+            AccessToken=record["cognitoAccessToken"],
+            UserCode=code,
+            FriendlyDeviceName="Zoolanding authenticator",
+        )
+    except Exception as exc:
+        _log("WARNING", "Cognito voluntary MFA verification failed", domain=session["domain"], authProfileId=profile["authProfileId"], errorType=type(exc).__name__)
+        raise AuthAdminUnauthorized("MFA verification failed") from exc
+    if _clean_string(response.get("Status")) != "SUCCESS":
+        raise AuthAdminUnauthorized("MFA verification failed")
+
+    try:
+        _cognito_client().set_user_mfa_preference(
+            AccessToken=record["cognitoAccessToken"],
+            SoftwareTokenMfaSettings={
+                "Enabled": True,
+                "PreferredMfa": True,
+            },
+        )
+    except Exception as exc:
+        _log("WARNING", "Cognito voluntary MFA preference update failed", domain=session["domain"], authProfileId=profile["authProfileId"], errorType=type(exc).__name__)
+        raise AuthAdminUnauthorized("MFA verification failed") from exc
+
+    _session_store(profile).revoke_session(record["sessionIdHash"], _now_epoch())
+    return _json_response(200, {
+        "ok": True,
+        "domain": session["domain"],
+        "authProfileId": profile["authProfileId"],
+        "status": "mfa-enabled",
+        "account": _public_account(session, profile),
+        "session": _public_session(session, profile),
+    }, cookies=[
+        _cookie(MFA_ENROLLMENT_COOKIE_NAME, "", http_only=True, max_age=0),
+        _cookie(_mfa_enrollment_csrf_cookie_name(profile), "", http_only=False, max_age=0),
+    ])
+
+
 def _complete_challenge_response(record: dict[str, Any], profile: dict[str, Any], response: dict[str, Any]) -> dict[str, Any]:
     next_challenge = _clean_string(response.get("ChallengeName"))
     if next_challenge:
@@ -506,12 +643,15 @@ def _logout_response(event: dict[str, Any]) -> dict[str, Any]:
         except AuthAdminError:
             pass
     csrf_cookie_name = _csrf_cookie_name(profile_for_cookies) if profile_for_cookies else CSRF_COOKIE_NAME
+    mfa_enrollment_csrf_cookie_name = _mfa_enrollment_csrf_cookie_name(profile_for_cookies) if profile_for_cookies else MFA_ENROLLMENT_CSRF_COOKIE_NAME
     return _json_response(200, {
         "ok": True,
         "status": "signed-out",
     }, cookies=[
         _cookie(SESSION_COOKIE_NAME, "", http_only=True, max_age=0),
         _cookie(csrf_cookie_name, "", http_only=False, max_age=0),
+        _cookie(MFA_ENROLLMENT_COOKIE_NAME, "", http_only=True, max_age=0),
+        _cookie(mfa_enrollment_csrf_cookie_name, "", http_only=False, max_age=0),
     ])
 
 
@@ -642,6 +782,31 @@ def _require_challenge(
     return record, profile
 
 
+def _require_mfa_enrollment(event: dict[str, Any], session: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any]:
+    enrollment_value = _cookie_value(event, MFA_ENROLLMENT_COOKIE_NAME)
+    if not enrollment_value:
+        raise AuthAdminUnauthorized("MFA enrollment expired")
+    record = _session_store(profile).get_session(_sha256(enrollment_value))
+    if not record:
+        raise AuthAdminUnauthorized("MFA enrollment expired")
+    if record.get("recordType") != "authMfaEnrollment":
+        raise AuthAdminUnauthorized("MFA enrollment expired")
+    if record.get("revokedAt"):
+        raise AuthAdminUnauthorized("MFA enrollment expired")
+    if int(record.get("expiresAt") or 0) <= _now_epoch():
+        raise AuthAdminUnauthorized("MFA enrollment expired")
+    if record.get("tenantProfileKey") != _tenant_profile_key(profile):
+        raise AuthAdminUnauthorized("MFA enrollment expired")
+    if record.get("domain") != session.get("domain") or record.get("authProfileId") != session.get("authProfileId"):
+        raise AuthAdminUnauthorized("MFA enrollment expired")
+    if record.get("subject") != session.get("subject") or record.get("parentSessionIdHash") != session.get("sessionIdHash"):
+        raise AuthAdminUnauthorized("MFA enrollment expired")
+    if not _clean_string(record.get("cognitoAccessToken")):
+        raise AuthAdminUnauthorized("MFA enrollment expired")
+    _require_mfa_enrollment_csrf(event, record, profile)
+    return record
+
+
 def _require_admin_session(event: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     session, profile = _require_session(event)
     if session.get("approvalStatus") != "approved" or session.get("enabled") is not True:
@@ -699,6 +864,21 @@ def _require_challenge_csrf(event: dict[str, Any], record: dict[str, Any], profi
         raise AuthAdminForbidden("CSRF validation failed")
 
 
+def _require_mfa_enrollment_csrf(event: dict[str, Any], record: dict[str, Any], profile: dict[str, Any]) -> None:
+    header_value = _header(event, _csrf_header_name(profile))
+    cookie_value = _cookie_value(event, _mfa_enrollment_csrf_cookie_name(profile))
+    if not header_value or not cookie_value or not hmac.compare_digest(header_value, cookie_value):
+        raise AuthAdminForbidden("CSRF validation failed")
+    if not hmac.compare_digest(_sha256(header_value), str(record.get("mfaEnrollmentCsrfHash") or "")):
+        raise AuthAdminForbidden("CSRF validation failed")
+
+
+def _require_payload_context_matches_session(payload: dict[str, Any], session: dict[str, Any]) -> None:
+    domain, auth_profile_id = _payload_profile_context(payload)
+    if domain != session.get("domain") or auth_profile_id != session.get("authProfileId"):
+        raise AuthAdminUnauthorized()
+
+
 def _profile_for(domain: str, auth_profile_id: str) -> dict[str, Any]:
     matches = [
         profile
@@ -735,6 +915,12 @@ def _challenge_csrf_cookie_name(profile: Optional[dict[str, Any]]) -> str:
     session_config = profile.get("session") if isinstance(profile, dict) and isinstance(profile.get("session"), dict) else {}
     value = _clean_string(session_config.get("challengeCsrfCookieName") if isinstance(session_config, dict) else "")
     return value if re.fullmatch(r"[A-Za-z0-9._-]{1,64}", value) else CHALLENGE_CSRF_COOKIE_NAME
+
+
+def _mfa_enrollment_csrf_cookie_name(profile: Optional[dict[str, Any]]) -> str:
+    session_config = profile.get("session") if isinstance(profile, dict) and isinstance(profile.get("session"), dict) else {}
+    value = _clean_string(session_config.get("mfaEnrollCsrfCookieName") if isinstance(session_config, dict) else "")
+    return value if re.fullmatch(r"[A-Za-z0-9._-]{1,64}", value) else MFA_ENROLLMENT_CSRF_COOKIE_NAME
 
 
 def _csrf_header_name(profile: Optional[dict[str, Any]]) -> str:

@@ -131,6 +131,7 @@ Resources:
                   - cognito-idp:AssociateSoftwareToken
                   - cognito-idp:InitiateAuth
                   - cognito-idp:RespondToAuthChallenge
+                  - cognito-idp:SetUserMFAPreference
                   - cognito-idp:VerifySoftwareToken
                 Resource:
                   Ref: CognitoUserPoolArns
@@ -206,6 +207,20 @@ Resources:
               Ref: AuthAdminApi
             Method: POST
             Path: /auth/session/mfa/verify
+        SessionMfaEnrollStart:
+          Type: HttpApi
+          Properties:
+            ApiId:
+              Ref: AuthAdminApi
+            Method: POST
+            Path: /auth/session/mfa/enroll/start
+        SessionMfaEnrollVerify:
+          Type: HttpApi
+          Properties:
+            ApiId:
+              Ref: AuthAdminApi
+            Method: POST
+            Path: /auth/session/mfa/enroll/verify
         SessionMe:
           Type: HttpApi
           Properties:
