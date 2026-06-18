@@ -129,6 +129,7 @@ Resources:
                   - cognito-idp:AdminGetUser
                   - cognito-idp:AdminListGroupsForUser
                   - cognito-idp:AdminRemoveUserFromGroup
+                  - cognito-idp:AdminSetUserMFAPreference
                   - cognito-idp:AssociateSoftwareToken
                   - cognito-idp:InitiateAuth
                   - cognito-idp:RespondToAuthChallenge
@@ -278,6 +279,13 @@ Resources:
               Ref: AuthAdminApi
             Method: POST
             Path: /auth/admin/users/{subject}/reactivate
+        AdminResetUserMfa:
+          Type: HttpApi
+          Properties:
+            ApiId:
+              Ref: AuthAdminApi
+            Method: POST
+            Path: /auth/admin/users/{subject}/mfa/reset
 
 Outputs:
   ApiEndpoint:

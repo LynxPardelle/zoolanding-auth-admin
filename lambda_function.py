@@ -137,6 +137,8 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
                 return _set_user_enabled_response(event, target_subject, enabled=False)
             if operation == "reactivate":
                 return _set_user_enabled_response(event, target_subject, enabled=True)
+            if operation == "mfa/reset":
+                return _reset_user_mfa_response(event, target_subject)
         return _json_response(404, {"ok": False, "error": "Auth admin route not found"})
     except AuthAdminError as exc:
         return _json_response(exc.status_code, {"ok": False, "error": exc.public_message})
@@ -809,6 +811,54 @@ def _set_user_enabled_response(event: dict[str, Any], target_subject: str, *, en
     return _json_response(200, {"ok": True, "user": _public_user(updated, profile)})
 
 
+def _reset_user_mfa_response(event: dict[str, Any], target_subject: str) -> dict[str, Any]:
+    actor, profile = _require_admin_session(event)
+    _require_csrf(event, actor, profile)
+    if target_subject == actor["subject"]:
+        raise AuthAdminError("Users cannot reset their own MFA")
+    user = _target_user(profile, target_subject)
+    username = _target_username(user)
+    try:
+        _cognito_client().admin_set_user_mfa_preference(
+            UserPoolId=profile["userPoolId"],
+            Username=username,
+            SoftwareTokenMfaSettings={
+                "Enabled": False,
+                "PreferredMfa": False,
+            },
+        )
+    except Exception as exc:
+        _log(
+            "WARNING",
+            "Cognito admin MFA reset failed",
+            domain=profile.get("domain"),
+            authProfileId=profile.get("authProfileId"),
+            targetSubject=target_subject,
+            errorType=type(exc).__name__,
+        )
+        raise AuthAdminError("MFA reset failed") from exc
+
+    updated = _session_store(profile).update_user(_user_key(profile, target_subject), {
+        "sessionVersion": _next_session_version(user),
+        "mfaResetAt": _now_epoch(),
+        "mfaResetBy": actor["subject"],
+        "updatedAt": _now_epoch(),
+        "updatedBy": actor["subject"],
+    })
+    _write_audit(profile, actor, "user-mfa-reset", target_subject, {"method": "SOFTWARE_TOKEN_MFA"})
+    return _json_response(200, {
+        "ok": True,
+        "status": "mfa-reset",
+        "user": _public_user(updated, profile),
+        "mfa": {
+            "status": "disabled",
+            "softwareTokenEnabled": False,
+            "methods": [],
+            "preferredMethod": "",
+        },
+    })
+
+
 def _require_session(event: dict[str, Any], *, allow_inactive: bool = False) -> tuple[dict[str, Any], dict[str, Any]]:
     session_value = _cookie_value(event, SESSION_COOKIE_NAME)
     if not session_value:
@@ -1473,7 +1523,7 @@ def _path(event: dict[str, Any]) -> str:
 
 
 def _admin_user_operation(path: str) -> tuple[str, str]:
-    match = re.fullmatch(r"/auth/admin/users/([^/]+)/(approve|groups|suspend|reactivate)", path)
+    match = re.fullmatch(r"/auth/admin/users/([^/]+)/(approve|groups|suspend|reactivate|mfa/reset)", path)
     if not match:
         raise AuthAdminNotFound("Auth admin route not found")
     return match.group(1), match.group(2)

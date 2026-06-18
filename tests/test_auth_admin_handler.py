@@ -150,6 +150,12 @@ class FakeCognito:
             raise self.preference_error
         return {}
 
+    def admin_set_user_mfa_preference(self, **kwargs):
+        self.calls.append(("admin_set_user_mfa_preference", kwargs))
+        if self.preference_error:
+            raise self.preference_error
+        return {}
+
     def admin_get_user(self, **kwargs):
         self.calls.append(("admin_get_user", kwargs))
         if self.admin_get_user_error:
@@ -991,6 +997,28 @@ class AuthAdminHandlerTests(unittest.TestCase):
         self.assertEqual(self_response["statusCode"], 400)
         self.assertEqual(body(self_response)["error"], "Users cannot approve themselves")
 
+    def test_reset_user_mfa_requires_csrf_and_blocks_self_reset(self):
+        _, fake_dynamo, _, session_value, csrf_value = self.sign_in(claims=admin_claims())
+
+        missing_csrf_response, _, fake_cognito = self.run_with_fakes(
+            http_event("POST", "/auth/admin/users/client-sub/mfa/reset", cookies=[f"__Host-zlp_session={session_value}"]),
+            fake_dynamo=fake_dynamo,
+        )
+        self.assertEqual(missing_csrf_response["statusCode"], 403)
+        self.assertEqual(fake_cognito.calls, [])
+
+        self_response, _, _ = self.run_with_fakes(
+            http_event(
+                "POST",
+                "/auth/admin/users/admin-sub/mfa/reset",
+                headers={"x-zlp-csrf": csrf_value},
+                cookies=[f"__Host-zlp_session={session_value}", f"zlp_csrf={csrf_value}"],
+            ),
+            fake_dynamo=fake_dynamo,
+        )
+        self.assertEqual(self_response["statusCode"], 400)
+        self.assertEqual(body(self_response)["error"], "Users cannot reset their own MFA")
+
     def test_csrf_rejects_mismatched_cookie_header_and_invalid_hash(self):
         _, fake_dynamo, _, session_value, csrf_value = self.sign_in(claims=admin_claims())
 
@@ -1308,6 +1336,49 @@ class AuthAdminHandlerTests(unittest.TestCase):
             "user-reactivated",
         ])
 
+    def test_reset_user_mfa_disables_software_token_bumps_session_version_and_audits(self):
+        _, fake_dynamo, fake_cognito, session_value, csrf_value = self.sign_in(claims=admin_claims())
+        tenant_key = "zoositioweb.com.mx#staff#test"
+        fake_dynamo.users[(tenant_key, "USER#client-sub")] = {
+            "tenantProfileKey": tenant_key,
+            "subject": "client-sub",
+            "username": "client@example.test",
+            "email": "client@example.test",
+            "roles": ["zoosite-client"],
+            "approvalStatus": "approved",
+            "enabled": True,
+            "sessionVersion": 3,
+        }
+
+        response, _, _ = self.run_with_fakes(
+            http_event(
+                "POST",
+                "/auth/admin/users/client-sub/mfa/reset",
+                headers={"x-zlp-csrf": csrf_value},
+                cookies=[f"__Host-zlp_session={session_value}", f"zlp_csrf={csrf_value}"],
+            ),
+            fake_dynamo=fake_dynamo,
+            fake_cognito=fake_cognito,
+        )
+
+        self.assertEqual(response["statusCode"], 200)
+        self.assertEqual(body(response)["status"], "mfa-reset")
+        self.assertEqual(body(response)["user"]["subject"], "client-sub")
+        self.assertEqual(fake_dynamo.users[(tenant_key, "USER#client-sub")]["sessionVersion"], 4)
+        self.assertIn(("admin_set_user_mfa_preference", {
+            "UserPoolId": "us-east-1_pool",
+            "Username": "client@example.test",
+            "SoftwareTokenMfaSettings": {
+                "Enabled": False,
+                "PreferredMfa": False,
+            },
+        }), fake_cognito.calls)
+        self.assertEqual(fake_dynamo.audit[-1]["eventType"], "user-mfa-reset")
+        self.assertEqual(fake_dynamo.audit[-1]["actorSubject"], "admin-sub")
+        self.assertEqual(fake_dynamo.audit[-1]["details"], {"method": "SOFTWARE_TOKEN_MFA"})
+        self.assertNotIn("SecretCode", json.dumps(response))
+        self.assertNotIn("accessToken", json.dumps(response))
+
     def test_logout_revokes_session_and_clears_cookies(self):
         _, fake_dynamo, _, session_value, csrf_value = self.sign_in()
 
@@ -1331,6 +1402,7 @@ class AuthAdminHandlerTests(unittest.TestCase):
 
         for action in (
             "cognito-idp:AdminGetUser",
+            "cognito-idp:AdminSetUserMFAPreference",
             "cognito-idp:AssociateSoftwareToken",
             "cognito-idp:RespondToAuthChallenge",
             "cognito-idp:SetUserMFAPreference",
@@ -1339,6 +1411,7 @@ class AuthAdminHandlerTests(unittest.TestCase):
             self.assertIn(action, template)
         self.assertIn("Ref: CognitoUserPoolArns", template)
         self.assertIn("/auth/session/mfa/disable", template)
+        self.assertIn("/auth/admin/users/{subject}/mfa/reset", template)
 
 
 if __name__ == "__main__":
