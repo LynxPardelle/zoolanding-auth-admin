@@ -150,6 +150,12 @@ class FakeCognito:
             raise self.preference_error
         return {}
 
+    def admin_set_user_mfa_preference(self, **kwargs):
+        self.calls.append(("admin_set_user_mfa_preference", kwargs))
+        if self.preference_error:
+            raise self.preference_error
+        return {}
+
     def admin_get_user(self, **kwargs):
         self.calls.append(("admin_get_user", kwargs))
         if self.admin_get_user_error:
@@ -373,6 +379,61 @@ class AuthAdminHandlerTests(unittest.TestCase):
         self.assertNotIn("raw-cognito-session", json.dumps(response_body))
         self.assertIn("__Host-zlp_challenge=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0", "\n".join(response.get("cookies") or []))
         self.assertIn("zlp_challenge_csrf=; Secure; SameSite=Lax; Path=/; Max-Age=0", "\n".join(response.get("cookies") or []))
+
+    def test_software_token_mfa_challenge_reports_environment_mismatch(self):
+        challenge_response = {
+            "ChallengeName": "SOFTWARE_TOKEN_MFA",
+            "ChallengeParameters": {"USER_ID_FOR_SRP": "client-cognito-username"},
+            "Session": "raw-cognito-session",
+        }
+        _, fake_dynamo, _ = self.run_with_fakes(
+            http_event("POST", "/auth/session/signin", {
+                "domain": "zoositioweb.com.mx",
+                "authProfileId": "staff",
+                "email": "client@example.test",
+                "password": "ValidPass123!",
+            }),
+            fake_cognito=FakeCognito(auth_response=challenge_response),
+        )
+        claims = {
+            "sub": "client-sub",
+            "email": "client@example.test",
+            "iss": "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_pool",
+            "aud": "public-client-id",
+            "token_use": "id",
+            "custom:tenant_id": "zoosite",
+            "custom:zoolanding_env": "prod",
+            "cognito:groups": ["zoosite-client"],
+            "exp": 4102444800,
+        }
+
+        response, _, fake_cognito = self.run_with_fakes(
+            http_event("POST", "/auth/session/challenge/respond", {
+                "domain": "zoositioweb.com.mx",
+                "authProfileId": "staff",
+                "code": "123456",
+            }, headers={"x-zlp-csrf": "csrf-value"}, cookies=["__Host-zlp_challenge=session-value", "zlp_challenge_csrf=csrf-value"]),
+            fake_dynamo=fake_dynamo,
+            claims=claims,
+        )
+
+        self.assertEqual(response["statusCode"], 403)
+        self.assertEqual(body(response)["error"], "Account does not belong to this environment")
+        self.assertEqual(body(response)["errorCode"], "auth_environment_mismatch")
+        self.assertEqual([call[0] for call in fake_cognito.calls], ["respond_to_auth_challenge"])
+
+    def test_software_token_mfa_challenge_reports_expired_challenge_code(self):
+        response, _, _ = self.run_with_fakes(
+            http_event("POST", "/auth/session/challenge/respond", {
+                "domain": "zoositioweb.com.mx",
+                "authProfileId": "staff",
+                "code": "123456",
+            }),
+        )
+
+        self.assertEqual(response["statusCode"], 401)
+        self.assertEqual(body(response)["error"], "Authentication challenge expired")
+        self.assertEqual(body(response)["errorCode"], "auth_challenge_expired")
 
     def test_software_token_mfa_challenge_requires_challenge_csrf(self):
         challenge_response = {
@@ -991,6 +1052,28 @@ class AuthAdminHandlerTests(unittest.TestCase):
         self.assertEqual(self_response["statusCode"], 400)
         self.assertEqual(body(self_response)["error"], "Users cannot approve themselves")
 
+    def test_reset_user_mfa_requires_csrf_and_blocks_self_reset(self):
+        _, fake_dynamo, _, session_value, csrf_value = self.sign_in(claims=admin_claims())
+
+        missing_csrf_response, _, fake_cognito = self.run_with_fakes(
+            http_event("POST", "/auth/admin/users/client-sub/mfa/reset", cookies=[f"__Host-zlp_session={session_value}"]),
+            fake_dynamo=fake_dynamo,
+        )
+        self.assertEqual(missing_csrf_response["statusCode"], 403)
+        self.assertEqual(fake_cognito.calls, [])
+
+        self_response, _, _ = self.run_with_fakes(
+            http_event(
+                "POST",
+                "/auth/admin/users/admin-sub/mfa/reset",
+                headers={"x-zlp-csrf": csrf_value},
+                cookies=[f"__Host-zlp_session={session_value}", f"zlp_csrf={csrf_value}"],
+            ),
+            fake_dynamo=fake_dynamo,
+        )
+        self.assertEqual(self_response["statusCode"], 400)
+        self.assertEqual(body(self_response)["error"], "Users cannot reset their own MFA")
+
     def test_csrf_rejects_mismatched_cookie_header_and_invalid_hash(self):
         _, fake_dynamo, _, session_value, csrf_value = self.sign_in(claims=admin_claims())
 
@@ -1142,8 +1225,82 @@ class AuthAdminHandlerTests(unittest.TestCase):
             "password": "ValidPass123!",
         }), claims=claims)
 
-        self.assertEqual(response["statusCode"], 401)
-        self.assertEqual(body(response)["error"], "Sign-in failed")
+        self.assertEqual(response["statusCode"], 403)
+        self.assertEqual(body(response)["error"], "Account does not belong to this environment")
+        self.assertEqual(body(response)["errorCode"], "auth_environment_mismatch")
+
+    def test_signin_accepts_multi_environment_claim_when_profile_opts_in(self):
+        claims = {
+            "sub": "client-sub",
+            "email": "client@example.test",
+            "iss": "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_pool",
+            "aud": "public-client-id",
+            "token_use": "id",
+            "custom:tenant_id": "zoosite",
+            "custom:zoolanding_env": "prod,test",
+            "cognito:groups": ["zoosite-client"],
+            "exp": 4102444800,
+        }
+
+        response, _, _ = self.run_with_fakes(http_event("POST", "/auth/session/signin", {
+            "domain": "zoositioweb.com.mx",
+            "authProfileId": "staff",
+            "email": "client@example.test",
+            "password": "ValidPass123!",
+        }), claims=claims, env={
+            "AUTH_ADMIN_CONFIG_JSON_BASE64": encoded_config(environmentClaimMode="list"),
+        })
+
+        self.assertEqual(response["statusCode"], 200)
+        self.assertEqual(body(response)["status"], "signed-in")
+
+    def test_signin_keeps_single_environment_claim_strict_by_default(self):
+        claims = {
+            "sub": "client-sub",
+            "email": "client@example.test",
+            "iss": "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_pool",
+            "aud": "public-client-id",
+            "token_use": "id",
+            "custom:tenant_id": "zoosite",
+            "custom:zoolanding_env": "prod,test",
+            "cognito:groups": ["zoosite-client"],
+            "exp": 4102444800,
+        }
+
+        response, _, _ = self.run_with_fakes(http_event("POST", "/auth/session/signin", {
+            "domain": "zoositioweb.com.mx",
+            "authProfileId": "staff",
+            "email": "client@example.test",
+            "password": "ValidPass123!",
+        }), claims=claims)
+
+        self.assertEqual(response["statusCode"], 403)
+        self.assertEqual(body(response)["errorCode"], "auth_environment_mismatch")
+
+    def test_signin_rejects_multi_environment_claim_missing_current_stack(self):
+        claims = {
+            "sub": "client-sub",
+            "email": "client@example.test",
+            "iss": "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_pool",
+            "aud": "public-client-id",
+            "token_use": "id",
+            "custom:tenant_id": "zoosite",
+            "custom:zoolanding_env": "prod",
+            "cognito:groups": ["zoosite-client"],
+            "exp": 4102444800,
+        }
+
+        response, _, _ = self.run_with_fakes(http_event("POST", "/auth/session/signin", {
+            "domain": "zoositioweb.com.mx",
+            "authProfileId": "staff",
+            "email": "client@example.test",
+            "password": "ValidPass123!",
+        }), claims=claims, env={
+            "AUTH_ADMIN_CONFIG_JSON_BASE64": encoded_config(environmentClaimMode="list"),
+        })
+
+        self.assertEqual(response["statusCode"], 403)
+        self.assertEqual(body(response)["errorCode"], "auth_environment_mismatch")
 
     def test_signin_rejects_non_id_token_claims(self):
         claims = {
@@ -1308,6 +1465,49 @@ class AuthAdminHandlerTests(unittest.TestCase):
             "user-reactivated",
         ])
 
+    def test_reset_user_mfa_disables_software_token_bumps_session_version_and_audits(self):
+        _, fake_dynamo, fake_cognito, session_value, csrf_value = self.sign_in(claims=admin_claims())
+        tenant_key = "zoositioweb.com.mx#staff#test"
+        fake_dynamo.users[(tenant_key, "USER#client-sub")] = {
+            "tenantProfileKey": tenant_key,
+            "subject": "client-sub",
+            "username": "client@example.test",
+            "email": "client@example.test",
+            "roles": ["zoosite-client"],
+            "approvalStatus": "approved",
+            "enabled": True,
+            "sessionVersion": 3,
+        }
+
+        response, _, _ = self.run_with_fakes(
+            http_event(
+                "POST",
+                "/auth/admin/users/client-sub/mfa/reset",
+                headers={"x-zlp-csrf": csrf_value},
+                cookies=[f"__Host-zlp_session={session_value}", f"zlp_csrf={csrf_value}"],
+            ),
+            fake_dynamo=fake_dynamo,
+            fake_cognito=fake_cognito,
+        )
+
+        self.assertEqual(response["statusCode"], 200)
+        self.assertEqual(body(response)["status"], "mfa-reset")
+        self.assertEqual(body(response)["user"]["subject"], "client-sub")
+        self.assertEqual(fake_dynamo.users[(tenant_key, "USER#client-sub")]["sessionVersion"], 4)
+        self.assertIn(("admin_set_user_mfa_preference", {
+            "UserPoolId": "us-east-1_pool",
+            "Username": "client@example.test",
+            "SoftwareTokenMfaSettings": {
+                "Enabled": False,
+                "PreferredMfa": False,
+            },
+        }), fake_cognito.calls)
+        self.assertEqual(fake_dynamo.audit[-1]["eventType"], "user-mfa-reset")
+        self.assertEqual(fake_dynamo.audit[-1]["actorSubject"], "admin-sub")
+        self.assertEqual(fake_dynamo.audit[-1]["details"], {"method": "SOFTWARE_TOKEN_MFA"})
+        self.assertNotIn("SecretCode", json.dumps(response))
+        self.assertNotIn("accessToken", json.dumps(response))
+
     def test_logout_revokes_session_and_clears_cookies(self):
         _, fake_dynamo, _, session_value, csrf_value = self.sign_in()
 
@@ -1331,6 +1531,7 @@ class AuthAdminHandlerTests(unittest.TestCase):
 
         for action in (
             "cognito-idp:AdminGetUser",
+            "cognito-idp:AdminSetUserMFAPreference",
             "cognito-idp:AssociateSoftwareToken",
             "cognito-idp:RespondToAuthChallenge",
             "cognito-idp:SetUserMFAPreference",
@@ -1339,6 +1540,7 @@ class AuthAdminHandlerTests(unittest.TestCase):
             self.assertIn(action, template)
         self.assertIn("Ref: CognitoUserPoolArns", template)
         self.assertIn("/auth/session/mfa/disable", template)
+        self.assertIn("/auth/admin/users/{subject}/mfa/reset", template)
 
 
 if __name__ == "__main__":

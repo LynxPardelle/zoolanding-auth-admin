@@ -29,6 +29,7 @@ DEFAULT_SESSION_SECONDS = 12 * 60 * 60
 DEFAULT_CHALLENGE_SECONDS = 5 * 60
 DEFAULT_MFA_ENROLLMENT_SECONDS = 5 * 60
 AUTH_ENVIRONMENTS = {"dev", "test", "prod"}
+ENVIRONMENT_CLAIM_MODES = {"single", "list"}
 APPROVAL_STATUSES = {"pending", "approved", "rejected", "suspended"}
 SUPPORTED_CHALLENGES = {"SOFTWARE_TOKEN_MFA", "MFA_SETUP"}
 SECRET_KEY_FRAGMENTS = (
@@ -61,10 +62,11 @@ class AuthAdminError(Exception):
     status_code = 400
     public_message = "Invalid auth admin request"
 
-    def __init__(self, message: Optional[str] = None):
+    def __init__(self, message: Optional[str] = None, *, error_code: Optional[str] = None):
         super().__init__(message or self.public_message)
         if message:
             self.public_message = message
+        self.error_code = _clean_string(error_code)
 
 
 class AuthAdminConfigError(AuthAdminError):
@@ -137,9 +139,14 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
                 return _set_user_enabled_response(event, target_subject, enabled=False)
             if operation == "reactivate":
                 return _set_user_enabled_response(event, target_subject, enabled=True)
+            if operation == "mfa/reset":
+                return _reset_user_mfa_response(event, target_subject)
         return _json_response(404, {"ok": False, "error": "Auth admin route not found"})
     except AuthAdminError as exc:
-        return _json_response(exc.status_code, {"ok": False, "error": exc.public_message})
+        payload = {"ok": False, "error": exc.public_message}
+        if exc.error_code:
+            payload["errorCode"] = exc.error_code
+        return _json_response(exc.status_code, payload)
     except ValueError as exc:
         return _json_response(400, {"ok": False, "error": str(exc)})
     except Exception as exc:
@@ -205,6 +212,7 @@ def _validate_profile(profile: Any, index: int) -> dict[str, Any]:
     normalized["manageableGroups"] = _string_list(normalized.get("manageableGroups")) or normalized["allowedGroups"]
     normalized["tenantClaim"] = _clean_string(normalized.get("tenantClaim") or "custom:tenant_id")
     normalized["environmentClaim"] = _clean_string(normalized.get("environmentClaim"))
+    normalized["environmentClaimMode"] = _clean_string(normalized.get("environmentClaimMode") or "single")
     normalized["groupClaim"] = _clean_string(normalized.get("groupClaim") or "cognito:groups")
     normalized["defaultUserStatus"] = _clean_string(normalized.get("defaultUserStatus") or "pending")
     normalized["adminGroupsAutoApproved"] = normalized.get("adminGroupsAutoApproved", True) is True
@@ -223,6 +231,10 @@ def _validate_profile(profile: Any, index: int) -> dict[str, Any]:
         raise AuthAdminConfigError(f"Profile {index} manageableGroups must be allowedGroups")
     if normalized["environmentClaim"] and not re.fullmatch(r"custom:[A-Za-z0-9_]{1,20}", normalized["environmentClaim"]):
         raise AuthAdminConfigError(f"Profile {index} environmentClaim is invalid")
+    if normalized["environmentClaimMode"] not in ENVIRONMENT_CLAIM_MODES:
+        raise AuthAdminConfigError(f"Profile {index} environmentClaimMode is invalid")
+    if normalized["environmentClaimMode"] != "single" and not normalized["environmentClaim"]:
+        raise AuthAdminConfigError(f"Profile {index} environmentClaimMode requires environmentClaim")
 
     custom_auth = normalized.get("customAuth")
     if not isinstance(custom_auth, dict) or not isinstance(custom_auth.get("signin"), dict) or custom_auth["signin"].get("enabled") is not True:
@@ -273,7 +285,14 @@ def _create_private_session_response(
     if not id_token:
         raise AuthAdminUnauthorized("Sign-in failed")
     claims = _verify_jwt(id_token, profile)
-    if not _claims_allowed_for_profile(claims, profile):
+    claims_rejection = _claims_rejection_code(claims, profile)
+    if claims_rejection:
+        _log("WARNING", "JWT claims rejected", domain=domain, authProfileId=profile["authProfileId"], reason=claims_rejection)
+        if claims_rejection == "environment_mismatch":
+            raise AuthAdminForbidden(
+                "Account does not belong to this environment",
+                error_code="auth_environment_mismatch",
+            )
         raise AuthAdminUnauthorized("Sign-in failed")
 
     store = _session_store(profile)
@@ -809,6 +828,54 @@ def _set_user_enabled_response(event: dict[str, Any], target_subject: str, *, en
     return _json_response(200, {"ok": True, "user": _public_user(updated, profile)})
 
 
+def _reset_user_mfa_response(event: dict[str, Any], target_subject: str) -> dict[str, Any]:
+    actor, profile = _require_admin_session(event)
+    _require_csrf(event, actor, profile)
+    if target_subject == actor["subject"]:
+        raise AuthAdminError("Users cannot reset their own MFA")
+    user = _target_user(profile, target_subject)
+    username = _target_username(user)
+    try:
+        _cognito_client().admin_set_user_mfa_preference(
+            UserPoolId=profile["userPoolId"],
+            Username=username,
+            SoftwareTokenMfaSettings={
+                "Enabled": False,
+                "PreferredMfa": False,
+            },
+        )
+    except Exception as exc:
+        _log(
+            "WARNING",
+            "Cognito admin MFA reset failed",
+            domain=profile.get("domain"),
+            authProfileId=profile.get("authProfileId"),
+            targetSubject=target_subject,
+            errorType=type(exc).__name__,
+        )
+        raise AuthAdminError("MFA reset failed") from exc
+
+    updated = _session_store(profile).update_user(_user_key(profile, target_subject), {
+        "sessionVersion": _next_session_version(user),
+        "mfaResetAt": _now_epoch(),
+        "mfaResetBy": actor["subject"],
+        "updatedAt": _now_epoch(),
+        "updatedBy": actor["subject"],
+    })
+    _write_audit(profile, actor, "user-mfa-reset", target_subject, {"method": "SOFTWARE_TOKEN_MFA"})
+    return _json_response(200, {
+        "ok": True,
+        "status": "mfa-reset",
+        "user": _public_user(updated, profile),
+        "mfa": {
+            "status": "disabled",
+            "softwareTokenEnabled": False,
+            "methods": [],
+            "preferredMethod": "",
+        },
+    })
+
+
 def _require_session(event: dict[str, Any], *, allow_inactive: bool = False) -> tuple[dict[str, Any], dict[str, Any]]:
     session_value = _cookie_value(event, SESSION_COOKIE_NAME)
     if not session_value:
@@ -841,31 +908,38 @@ def _require_challenge(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     challenge_value = _cookie_value(event, CHALLENGE_COOKIE_NAME)
     if not challenge_value:
-        raise AuthAdminUnauthorized("Authentication challenge expired")
+        raise _auth_challenge_expired()
     try:
         domain, auth_profile_id = _payload_profile_context(payload)
         profile = _profile_for(domain, auth_profile_id)
     except AuthAdminError as exc:
-        raise AuthAdminUnauthorized("Authentication challenge expired") from exc
+        raise _auth_challenge_expired() from exc
     record = _session_store(profile).get_session(_sha256(challenge_value))
     if not record:
-        raise AuthAdminUnauthorized("Authentication challenge expired")
+        raise _auth_challenge_expired()
     if record.get("recordType") != "authChallenge":
-        raise AuthAdminUnauthorized("Authentication challenge expired")
+        raise _auth_challenge_expired()
     if record.get("revokedAt"):
-        raise AuthAdminUnauthorized("Authentication challenge expired")
+        raise _auth_challenge_expired()
     if int(record.get("expiresAt") or 0) <= _now_epoch():
-        raise AuthAdminUnauthorized("Authentication challenge expired")
+        raise _auth_challenge_expired()
     if record.get("tenantProfileKey") != _tenant_profile_key(profile):
-        raise AuthAdminUnauthorized("Authentication challenge expired")
+        raise _auth_challenge_expired()
     if record.get("domain") != domain or record.get("authProfileId") != auth_profile_id:
-        raise AuthAdminUnauthorized("Authentication challenge expired")
+        raise _auth_challenge_expired()
     if _clean_string(record.get("challengeName")) != expected_challenge:
         raise AuthAdminError("Authentication challenge type does not match")
     if not _clean_string(record.get("cognitoSession")) or not _clean_string(record.get("username")):
-        raise AuthAdminUnauthorized("Authentication challenge expired")
+        raise _auth_challenge_expired()
     _require_challenge_csrf(event, record, profile)
     return record, profile
+
+
+def _auth_challenge_expired() -> AuthAdminUnauthorized:
+    return AuthAdminUnauthorized(
+        "Authentication challenge expired",
+        error_code="auth_challenge_expired",
+    )
 
 
 def _require_mfa_enrollment(event: dict[str, Any], session: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any]:
@@ -1053,21 +1127,30 @@ def _upsert_user_state_from_claims(store: Any, profile: dict[str, Any], claims: 
 
 
 def _claims_allowed_for_profile(claims: dict[str, Any], profile: dict[str, Any]) -> bool:
+    return _claims_rejection_code(claims, profile) is None
+
+
+def _claims_rejection_code(claims: dict[str, Any], profile: dict[str, Any]) -> Optional[str]:
     if not _clean_string(claims.get("sub")):
-        return False
+        return "missing_subject"
     if _clean_string(claims.get("token_use")) != "id":
-        return False
+        return "token_use_mismatch"
     if str(claims.get("iss") or "") != profile["issuer"]:
-        return False
+        return "issuer_mismatch"
     if not set(_string_list(claims.get("aud")) + [_clean_string(claims.get("client_id"))]).intersection(set(profile["audiences"])):
-        return False
+        return "audience_mismatch"
     if profile["tenantClaim"] and str(claims.get(profile["tenantClaim"]) or "") != profile["tenantId"]:
-        return False
-    if profile["environmentClaim"] and str(claims.get(profile["environmentClaim"]) or "") != profile["environment"]:
-        return False
+        return "tenant_mismatch"
+    if profile["environmentClaim"]:
+        environments = _environment_claim_values(
+            claims.get(profile["environmentClaim"]),
+            profile.get("environmentClaimMode") or "single",
+        )
+        if profile["environment"] not in environments:
+            return "environment_mismatch"
     if not set(_string_list(claims.get(profile["groupClaim"]))).intersection(set(profile["allowedGroups"])):
-        return False
-    return True
+        return "group_mismatch"
+    return None
 
 
 def _verify_jwt(token: str, profile: dict[str, Any]) -> dict[str, Any]:
@@ -1473,7 +1556,7 @@ def _path(event: dict[str, Any]) -> str:
 
 
 def _admin_user_operation(path: str) -> tuple[str, str]:
-    match = re.fullmatch(r"/auth/admin/users/([^/]+)/(approve|groups|suspend|reactivate)", path)
+    match = re.fullmatch(r"/auth/admin/users/([^/]+)/(approve|groups|suspend|reactivate|mfa/reset)", path)
     if not match:
         raise AuthAdminNotFound("Auth admin route not found")
     return match.group(1), match.group(2)
@@ -1641,6 +1724,30 @@ def _environment_alias(value: Any) -> str:
     if environment not in AUTH_ENVIRONMENTS:
         raise AuthAdminConfigError("Environment must be dev, test, or prod")
     return environment
+
+
+def _environment_claim_values(value: Any, mode: str) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        raw_values = value
+    else:
+        raw_text = _clean_string(value)
+        if not raw_text:
+            return []
+        raw_values = re.split(r"[,\s]+", raw_text) if mode == "list" else [raw_text]
+
+    environments = []
+    aliases = {
+        "production": "prod",
+        "testing": "test",
+        "development": "dev",
+    }
+    for raw_value in raw_values:
+        environment = aliases.get(_clean_string(raw_value).lower(), _clean_string(raw_value).lower())
+        if environment in AUTH_ENVIRONMENTS and environment not in environments:
+            environments.append(environment)
+    return environments
 
 
 def _clean_string(value: Any) -> str:
