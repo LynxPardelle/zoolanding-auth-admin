@@ -1229,6 +1229,79 @@ class AuthAdminHandlerTests(unittest.TestCase):
         self.assertEqual(body(response)["error"], "Account does not belong to this environment")
         self.assertEqual(body(response)["errorCode"], "auth_environment_mismatch")
 
+    def test_signin_accepts_multi_environment_claim_when_profile_opts_in(self):
+        claims = {
+            "sub": "client-sub",
+            "email": "client@example.test",
+            "iss": "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_pool",
+            "aud": "public-client-id",
+            "token_use": "id",
+            "custom:tenant_id": "zoosite",
+            "custom:zoolanding_env": "prod,test",
+            "cognito:groups": ["zoosite-client"],
+            "exp": 4102444800,
+        }
+
+        response, _, _ = self.run_with_fakes(http_event("POST", "/auth/session/signin", {
+            "domain": "zoositioweb.com.mx",
+            "authProfileId": "staff",
+            "email": "client@example.test",
+            "password": "ValidPass123!",
+        }), claims=claims, env={
+            "AUTH_ADMIN_CONFIG_JSON_BASE64": encoded_config(environmentClaimMode="list"),
+        })
+
+        self.assertEqual(response["statusCode"], 200)
+        self.assertEqual(body(response)["status"], "signed-in")
+
+    def test_signin_keeps_single_environment_claim_strict_by_default(self):
+        claims = {
+            "sub": "client-sub",
+            "email": "client@example.test",
+            "iss": "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_pool",
+            "aud": "public-client-id",
+            "token_use": "id",
+            "custom:tenant_id": "zoosite",
+            "custom:zoolanding_env": "prod,test",
+            "cognito:groups": ["zoosite-client"],
+            "exp": 4102444800,
+        }
+
+        response, _, _ = self.run_with_fakes(http_event("POST", "/auth/session/signin", {
+            "domain": "zoositioweb.com.mx",
+            "authProfileId": "staff",
+            "email": "client@example.test",
+            "password": "ValidPass123!",
+        }), claims=claims)
+
+        self.assertEqual(response["statusCode"], 403)
+        self.assertEqual(body(response)["errorCode"], "auth_environment_mismatch")
+
+    def test_signin_rejects_multi_environment_claim_missing_current_stack(self):
+        claims = {
+            "sub": "client-sub",
+            "email": "client@example.test",
+            "iss": "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_pool",
+            "aud": "public-client-id",
+            "token_use": "id",
+            "custom:tenant_id": "zoosite",
+            "custom:zoolanding_env": "prod",
+            "cognito:groups": ["zoosite-client"],
+            "exp": 4102444800,
+        }
+
+        response, _, _ = self.run_with_fakes(http_event("POST", "/auth/session/signin", {
+            "domain": "zoositioweb.com.mx",
+            "authProfileId": "staff",
+            "email": "client@example.test",
+            "password": "ValidPass123!",
+        }), claims=claims, env={
+            "AUTH_ADMIN_CONFIG_JSON_BASE64": encoded_config(environmentClaimMode="list"),
+        })
+
+        self.assertEqual(response["statusCode"], 403)
+        self.assertEqual(body(response)["errorCode"], "auth_environment_mismatch")
+
     def test_signin_rejects_non_id_token_claims(self):
         claims = {
             "sub": "client-sub",
