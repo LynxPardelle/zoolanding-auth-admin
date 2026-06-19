@@ -1318,7 +1318,7 @@ def _write_audit(profile: dict[str, Any], actor: dict[str, Any], event_type: str
     now = _now_epoch()
     item = {
         "tenantProfileKey": _tenant_profile_key(profile),
-        "auditKey": f"AUDIT#{now}#{_sha256(event_type + target_subject)[:12]}",
+        "auditKey": f"AUDIT#{now}#{_sha256(event_type + target_subject)[:12]}#{_random_urlsafe(8)}",
         "eventType": event_type,
         "actorSubject": actor["subject"],
         "targetSubject": target_subject,
