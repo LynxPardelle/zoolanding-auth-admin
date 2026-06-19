@@ -127,7 +127,10 @@ Rules:
 python -m unittest discover -s tests -p "test_*.py"
 sam validate
 pip-audit -r requirements.txt
+python tools\check_auth_admin_readiness.py --region us-east-1
 ```
+
+The readiness check is read-only by default. It discovers the configured test and production auth-admin stack table outputs, verifies the session, user-state, and audit tables have PITR enabled, and confirms an audit table is present. Use `--enable-pitr` only when the discovered table names are confirmed auth-admin stack tables.
 
 ## Deployment Shape
 
