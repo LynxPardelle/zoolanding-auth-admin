@@ -65,6 +65,7 @@ Deployments pass a base64-encoded JSON config through `AuthAdminConfigJsonBase64
       "tenantId": "zoosite",
       "tenantClaim": "custom:tenant_id",
       "environmentClaim": "custom:zoolanding_env",
+      "environmentClaimMode": "single",
       "groupClaim": "cognito:groups",
       "allowedGroups": ["zoosite-client", "zoosite-admin"],
       "adminGroups": ["zoosite-admin"],
@@ -110,6 +111,7 @@ Rules:
 
 - `adminGroups` and `manageableGroups` must be subsets of `allowedGroups`.
 - `environmentClaim`, when present, must be a Cognito custom claim such as `custom:zoolanding_env`.
+- `environmentClaimMode` defaults to strict `single`. Use `list` only when a server-managed claim such as `prod,test` should authorize the same verified user in multiple stack environments.
 - Config rejects secret-like keys and common secret-looking values.
 - The deployed stack environment must match the selected profile `environment`.
 - Stack-created DynamoDB tables are default storage. A future per-profile `tables` block can point a profile to draft-specific tables.

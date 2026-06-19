@@ -29,6 +29,7 @@ DEFAULT_SESSION_SECONDS = 12 * 60 * 60
 DEFAULT_CHALLENGE_SECONDS = 5 * 60
 DEFAULT_MFA_ENROLLMENT_SECONDS = 5 * 60
 AUTH_ENVIRONMENTS = {"dev", "test", "prod"}
+ENVIRONMENT_CLAIM_MODES = {"single", "list"}
 APPROVAL_STATUSES = {"pending", "approved", "rejected", "suspended"}
 SUPPORTED_CHALLENGES = {"SOFTWARE_TOKEN_MFA", "MFA_SETUP"}
 SECRET_KEY_FRAGMENTS = (
@@ -211,6 +212,7 @@ def _validate_profile(profile: Any, index: int) -> dict[str, Any]:
     normalized["manageableGroups"] = _string_list(normalized.get("manageableGroups")) or normalized["allowedGroups"]
     normalized["tenantClaim"] = _clean_string(normalized.get("tenantClaim") or "custom:tenant_id")
     normalized["environmentClaim"] = _clean_string(normalized.get("environmentClaim"))
+    normalized["environmentClaimMode"] = _clean_string(normalized.get("environmentClaimMode") or "single")
     normalized["groupClaim"] = _clean_string(normalized.get("groupClaim") or "cognito:groups")
     normalized["defaultUserStatus"] = _clean_string(normalized.get("defaultUserStatus") or "pending")
     normalized["adminGroupsAutoApproved"] = normalized.get("adminGroupsAutoApproved", True) is True
@@ -229,6 +231,10 @@ def _validate_profile(profile: Any, index: int) -> dict[str, Any]:
         raise AuthAdminConfigError(f"Profile {index} manageableGroups must be allowedGroups")
     if normalized["environmentClaim"] and not re.fullmatch(r"custom:[A-Za-z0-9_]{1,20}", normalized["environmentClaim"]):
         raise AuthAdminConfigError(f"Profile {index} environmentClaim is invalid")
+    if normalized["environmentClaimMode"] not in ENVIRONMENT_CLAIM_MODES:
+        raise AuthAdminConfigError(f"Profile {index} environmentClaimMode is invalid")
+    if normalized["environmentClaimMode"] != "single" and not normalized["environmentClaim"]:
+        raise AuthAdminConfigError(f"Profile {index} environmentClaimMode requires environmentClaim")
 
     custom_auth = normalized.get("customAuth")
     if not isinstance(custom_auth, dict) or not isinstance(custom_auth.get("signin"), dict) or custom_auth["signin"].get("enabled") is not True:
@@ -1135,8 +1141,13 @@ def _claims_rejection_code(claims: dict[str, Any], profile: dict[str, Any]) -> O
         return "audience_mismatch"
     if profile["tenantClaim"] and str(claims.get(profile["tenantClaim"]) or "") != profile["tenantId"]:
         return "tenant_mismatch"
-    if profile["environmentClaim"] and str(claims.get(profile["environmentClaim"]) or "") != profile["environment"]:
-        return "environment_mismatch"
+    if profile["environmentClaim"]:
+        environments = _environment_claim_values(
+            claims.get(profile["environmentClaim"]),
+            profile.get("environmentClaimMode") or "single",
+        )
+        if profile["environment"] not in environments:
+            return "environment_mismatch"
     if not set(_string_list(claims.get(profile["groupClaim"]))).intersection(set(profile["allowedGroups"])):
         return "group_mismatch"
     return None
@@ -1713,6 +1724,30 @@ def _environment_alias(value: Any) -> str:
     if environment not in AUTH_ENVIRONMENTS:
         raise AuthAdminConfigError("Environment must be dev, test, or prod")
     return environment
+
+
+def _environment_claim_values(value: Any, mode: str) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        raw_values = value
+    else:
+        raw_text = _clean_string(value)
+        if not raw_text:
+            return []
+        raw_values = re.split(r"[,\s]+", raw_text) if mode == "list" else [raw_text]
+
+    environments = []
+    aliases = {
+        "production": "prod",
+        "testing": "test",
+        "development": "dev",
+    }
+    for raw_value in raw_values:
+        environment = aliases.get(_clean_string(raw_value).lower(), _clean_string(raw_value).lower())
+        if environment in AUTH_ENVIRONMENTS and environment not in environments:
+            environments.append(environment)
+    return environments
 
 
 def _clean_string(value: Any) -> str:
