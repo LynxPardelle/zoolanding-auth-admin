@@ -1205,6 +1205,24 @@ class AuthAdminHandlerTests(unittest.TestCase):
         self.assertEqual(fake_dynamo.audit[-1]["eventType"], "user-approved")
         self.assertEqual(fake_dynamo.audit[-1]["actorSubject"], "admin-sub")
 
+    def test_audit_keys_are_unique_for_same_target_event_in_same_second(self):
+        fake_dynamo = FakeDynamo()
+        actor = {"subject": "admin-sub"}
+
+        with patch.dict(os.environ, {
+                "AUTH_ADMIN_CONFIG_JSON_BASE64": encoded_config(),
+                "AUTH_ADMIN_ENVIRONMENT": "test",
+                "LOG_LEVEL": "ERROR",
+            }, clear=True), \
+                patch.object(auth_admin, "_session_store", return_value=fake_dynamo), \
+                patch.object(auth_admin, "_now_epoch", return_value=1_800_000_000):
+            profile = auth_admin.load_config()["profiles"][0]
+            auth_admin._write_audit(profile, actor, "user-approved", "client-sub", {"roles": ["zoosite-client"]})
+            auth_admin._write_audit(profile, actor, "user-approved", "client-sub", {"roles": ["zoosite-admin"]})
+
+        self.assertEqual(len(fake_dynamo.audit), 2)
+        self.assertNotEqual(fake_dynamo.audit[0]["auditKey"], fake_dynamo.audit[1]["auditKey"])
+
     def test_signin_rejects_environment_mismatch_claims(self):
         claims = {
             "sub": "client-sub",
