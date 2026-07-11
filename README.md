@@ -4,6 +4,26 @@ Generic serverless auth-admin BFF for Zoolanding drafts.
 
 It adds private session, account, and user-management workflows on top of Cognito-backed draft auth. It is intended for features such as `/mi-cuenta`, `/admin/*`, future blogs, per-draft analytics dashboards, and client-side configuration surfaces that need server-side authorization.
 
+## Start here
+
+| Task | Source |
+| --- | --- |
+| Agent safety and read order | [AGENTS.md](AGENTS.md) |
+| Current security and session contract | [Security Model](#security-model) |
+| Exact HTTP surface | [Endpoints](#endpoints), [lambda_function.py](lambda_function.py), and [template.yaml](template.yaml) |
+| Server-only profile shape | [Profile configuration](docs/profile-configuration.md) |
+| Tests and readiness | [Local Verification](#local-verification) and [tests/](tests/) |
+| Promotion and deployment | [Deployment Shape](#deployment-shape) and [.github/workflows/](.github/workflows/) |
+| Historical implementation evidence | [changelog/README.md](changelog/README.md) |
+
+Shared browser-safe contracts live in the Zoolandingpage hub:
+
+- [Auth profile registry](https://github.com/LynxPardelle/zoolandingpage/blob/main/docs/api-driven-config/17-auth-profile-registry.md)
+- [Protected feature contract](https://github.com/LynxPardelle/zoolandingpage/blob/main/docs/api-driven-config/19-protected-feature-contract.md)
+- [Fleet ownership](https://github.com/LynxPardelle/zoolandingpage/blob/main/docs/repository-map.md)
+
+The hub owns cross-repository browser contracts. This repository owns the BFF implementation, server-side trust boundaries, storage, deployment, and rollback. Keep dated evidence in `changelog/`; keep current behavior here, in code, tests, template, and workflows.
+
 ## Security Model
 
 - Browser auth forms send only public context: `domain`, `authProfileId`, email, password, code, and language.
@@ -44,82 +64,9 @@ It adds private session, account, and user-management workflows on top of Cognit
 - `POST /auth/admin/users/{subject}/reactivate`
 - `POST /auth/admin/users/{subject}/mfa/reset`
 
-## Config
+## Server-only profile configuration
 
-Deployments pass a base64-encoded JSON config through `AuthAdminConfigJsonBase64`.
-
-```json
-{
-  "version": 1,
-  "profiles": [
-    {
-      "enabled": true,
-      "environment": "test",
-      "domain": "zoositioweb.com.mx",
-      "authProfileId": "staff",
-      "provider": "cognito",
-      "issuer": "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_EXAMPLE",
-      "userPoolId": "us-east-1_EXAMPLE",
-      "clientId": "public-client-id",
-      "audiences": ["public-client-id"],
-      "tenantId": "zoosite",
-      "tenantClaim": "custom:tenant_id",
-      "environmentClaim": "custom:zoolanding_env",
-      "environmentClaimMode": "single",
-      "groupClaim": "cognito:groups",
-      "allowedGroups": ["zoosite-client", "zoosite-admin"],
-      "adminGroups": ["zoosite-admin"],
-      "manageableGroups": ["zoosite-client", "zoosite-admin"],
-      "defaultUserStatus": "pending",
-      "adminGroupsAutoApproved": true,
-      "customAuth": {
-        "signin": { "enabled": true }
-      },
-      "mfa": {
-        "mode": "optional",
-        "totp": {
-          "enabled": true,
-          "issuer": "zoositioweb",
-          "accountLabelTemplate": "{email}",
-          "friendlyDeviceName": "zoositioweb acceso"
-        }
-      },
-      "session": {
-        "challengeRespondPath": "/auth/session/challenge/respond",
-        "mfaSetupPath": "/auth/session/mfa/setup",
-        "mfaVerifyPath": "/auth/session/mfa/verify",
-        "mfaEnrollStartPath": "/auth/session/mfa/enroll/start",
-        "mfaEnrollVerifyPath": "/auth/session/mfa/enroll/verify",
-        "mfaDisablePath": "/auth/session/mfa/disable",
-        "challengeCsrfCookieName": "zlp_challenge_csrf",
-        "mfaEnrollCsrfCookieName": "zlp_mfa_enroll_csrf"
-      },
-      "admin": {
-        "usersPath": "/auth/admin/users",
-        "approveUserPathTemplate": "/auth/admin/users/{subject}/approve",
-        "groupsPathTemplate": "/auth/admin/users/{subject}/groups",
-        "suspendUserPathTemplate": "/auth/admin/users/{subject}/suspend",
-        "reactivateUserPathTemplate": "/auth/admin/users/{subject}/reactivate",
-        "resetUserMfaPathTemplate": "/auth/admin/users/{subject}/mfa/reset"
-      }
-    }
-  ]
-}
-```
-
-Rules:
-
-- `adminGroups` and `manageableGroups` must be subsets of `allowedGroups`.
-- `environmentClaim`, when present, must be a Cognito custom claim such as `custom:zoolanding_env`.
-- `environmentClaimMode` defaults to strict `single`. Use `list` only when a server-managed claim such as `prod,test` should authorize the same verified user in multiple stack environments.
-- Config rejects secret-like keys and common secret-looking values.
-- The deployed stack environment must match the selected profile `environment`.
-- Stack-created DynamoDB tables are default storage. A future per-profile `tables` block can point a profile to draft-specific tables.
-- `mfa.mode` may be `off`, `optional`, or `required`; `optional` and `required` require TOTP to be enabled in profile policy and Cognito.
-- `mfa.totp.issuer`, `accountLabelTemplate`, and `friendlyDeviceName` are optional profile fields for authenticator-app display names. Template placeholders are limited to safe profile/user fields such as `{domain}`, `{authProfileId}`, `{tenantId}`, `{username}`, and `{email}`.
-- TOTP setup material is sensitive enrollment material. Pages may display a setup secret only for explicit enrollment and must not put it in URLs, logs, analytics payloads, or durable notes.
-- `/auth/session/mfa/disable` is self-service only for users who can reauthenticate with password plus current TOTP code. Lost-device recovery still belongs to an admin/support path.
-- `/auth/admin/users/{subject}/mfa/reset` is the admin/support lost-device path. Cognito `AdminSetUserMFAPreference` disables the target user's software-token MFA preference; the user configures a replacement authenticator on a later sign-in/enrollment flow. It does not expose or delete a TOTP secret in browser responses.
+Deployments pass a base64-encoded JSON profile allowlist through `AuthAdminConfigJsonBase64`. The exact example, field rules, MFA policy, and sensitive setup-material boundary live in [docs/profile-configuration.md](docs/profile-configuration.md). Browser requests cannot choose tenant, environment, group, approval, Cognito, or storage policy.
 
 ## Local Verification
 
