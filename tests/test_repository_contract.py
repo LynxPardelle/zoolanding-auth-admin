@@ -28,6 +28,12 @@ class RepositoryContractTests(unittest.TestCase):
 
         self.assertIn("Pull requests into test must come from dev.", ci)
         self.assertIn("Pull requests into main must come from test.", ci)
+        self.assertIn("EVENT_NAME: ${{ github.event_name }}", ci)
+        self.assertIn("BASE_REF: ${{ github.base_ref }}", ci)
+        self.assertIn("HEAD_REF: ${{ github.head_ref }}", ci)
+        self.assertNotIn('if [[ "${{ github.event_name }}"', ci)
+        self.assertNotIn('base="${{ github.base_ref }}"', ci)
+        self.assertNotIn('head="${{ github.head_ref }}"', ci)
         self.assertIn("id-token: write", deploy_test)
         self.assertIn("id-token: write", deploy_prod)
         self.assertIn("AUTH_ADMIN_CONFIG_JSON_BASE64", deploy_test)
