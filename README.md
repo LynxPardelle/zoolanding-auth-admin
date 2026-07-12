@@ -1,5 +1,20 @@
 # Zoolanding Auth Admin
 
+<!-- zoolanding-hub-routing:start -->
+## Zoolanding Knowledge Router
+
+Shared procedures are routed through the Zoolandingpage hub. Start with [AGENTS.md](AGENTS.md) and open only the document needed for the current task.
+
+| Task | Read |
+| --- | --- |
+| Auth profile contract | [docs/api-driven-config/17-auth-profile-registry.md](https://github.com/LynxPardelle/zoolandingpage/blob/main/docs/api-driven-config/17-auth-profile-registry.md) |
+| Protected feature contract | [docs/api-driven-config/19-protected-feature-contract.md](https://github.com/LynxPardelle/zoolandingpage/blob/main/docs/api-driven-config/19-protected-feature-contract.md) |
+| Draft auth audit | [docs/api-driven-config/18-draft-auth-audit-matrix.md](https://github.com/LynxPardelle/zoolandingpage/blob/main/docs/api-driven-config/18-draft-auth-audit-matrix.md) |
+| Fleet ownership | [docs/repository-map.md](https://github.com/LynxPardelle/zoolandingpage/blob/main/docs/repository-map.md) |
+
+Critical repository-specific safety, deployment, and rollback rules remain local.
+<!-- zoolanding-hub-routing:end -->
+
 Generic serverless auth-admin BFF for Zoolanding drafts.
 
 It adds private session, account, and user-management workflows on top of Cognito-backed draft auth. It is intended for features such as `/mi-cuenta`, `/admin/*`, future blogs, per-draft analytics dashboards, and client-side configuration surfaces that need server-side authorization.

@@ -2,11 +2,12 @@ name: PR safety
 
 on:
   pull_request:
-    branches: [dev]
+    branches:
+      - dev
 
 permissions:
   contents: read
 
 jobs:
   pr-safety:
-    uses: LynxPardelle/zoolandingpage/.github/workflows/reusable-pr-safety.yml@587b31e7febda548d737d54caccaa61315bb5d9d
+    uses: LynxPardelle/zoolandingpage/.github/workflows/reusable-pr-safety.yml@9a39bd7804499677e9bbf71bad9ff916067ee9af
