@@ -1,5 +1,20 @@
 # Zoolanding Auth Admin Agent Guide
 
+<!-- zoolanding-hub-routing:start -->
+## Zoolanding Knowledge Router
+
+Read only the row needed for the current task, then inspect the local executable configuration or workflow that owns the behavior.
+
+| Task | Read |
+| --- | --- |
+| Auth profile contract | [docs/api-driven-config/17-auth-profile-registry.md](https://github.com/LynxPardelle/zoolandingpage/blob/main/docs/api-driven-config/17-auth-profile-registry.md) |
+| Protected feature contract | [docs/api-driven-config/19-protected-feature-contract.md](https://github.com/LynxPardelle/zoolandingpage/blob/main/docs/api-driven-config/19-protected-feature-contract.md) |
+| Draft auth audit | [docs/api-driven-config/18-draft-auth-audit-matrix.md](https://github.com/LynxPardelle/zoolandingpage/blob/main/docs/api-driven-config/18-draft-auth-audit-matrix.md) |
+| Fleet ownership | [docs/repository-map.md](https://github.com/LynxPardelle/zoolandingpage/blob/main/docs/repository-map.md) |
+
+Critical repository-specific safety, deployment, and rollback rules remain local.
+<!-- zoolanding-hub-routing:end -->
+
 Use this file as the repository entrypoint for agents and contributors.
 
 ## Read order
