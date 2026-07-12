@@ -8,3 +8,5 @@ venv/
 *.pyd
 *.log
 auth-admin-config.compact.b64
+.superpowers/
+devonly/
