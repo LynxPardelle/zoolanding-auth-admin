@@ -39,7 +39,7 @@ class RepositoryContractTests(unittest.TestCase):
         self.assertIn("AUTH_ADMIN_CONFIG_JSON_BASE64", deploy_test)
         self.assertIn("AUTH_ADMIN_CONFIG_JSON_BASE64", deploy_prod)
 
-        for workflow_name in ("deploy-dev.yml", "deploy-test.yml", "deploy-production.yml"):
+        for workflow_name in ("deploy-test.yml", "deploy-production.yml"):
             workflow = (REPO_ROOT / ".github" / "workflows" / workflow_name).read_text(encoding="utf-8")
             self.assertIn("$RUNNER_TEMP/auth-admin-config.compact.b64", workflow)
             self.assertIn("auth_admin.load_config()", workflow)

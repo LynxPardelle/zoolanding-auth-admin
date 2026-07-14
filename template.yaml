@@ -5,9 +5,8 @@ Description: Zoolanding generic auth admin BFF for draft account and user-manage
 Parameters:
   EnvironmentName:
     Type: String
-    Default: dev
+    Default: test
     AllowedValues:
-      - dev
       - test
       - prod
     Description: Deployment environment for this auth admin stack.
