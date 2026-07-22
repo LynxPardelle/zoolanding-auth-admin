@@ -113,6 +113,8 @@ Required GitHub Environment secret:
 
 - `AUTH_ADMIN_CONFIG_JSON_BASE64`
 
+The stack publishes only the session and user-state table names for dependent services through `/zoolanding/{test|production}/auth/session-table-name` and `/zoolanding/{test|production}/auth/user-state-table-name`. These are identifiers, not credentials. The existing Auth Admin production runtime and API stage remain `prod`; the template maps that legacy runtime name to the shared external `production` SSM namespace without changing deployed route compatibility.
+
 Deploy jobs fail closed before AWS credential setup unless `AWS_ROLE_ARN`, `AUTH_ADMIN_CONFIG_READY=true`, `COGNITO_USER_POOL_ARNS`, and `AUTH_ADMIN_CONFIG_JSON_BASE64` are present in the target GitHub Environment. CI still runs without those values.
 
 Front-door routing should expose these endpoints as same-origin `/auth/session/*` and `/auth/admin/*`. Do not expose wildcard `/auth/*` in a way that steals draft-rendered pages such as `/auth/callback`.

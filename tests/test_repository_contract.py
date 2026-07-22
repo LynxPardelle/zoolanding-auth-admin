@@ -1,4 +1,5 @@
 import pathlib
+import re
 import unittest
 
 
@@ -20,6 +21,36 @@ class RepositoryContractTests(unittest.TestCase):
         self.assertNotIn("userpool/*", template)
         self.assertIn("cognito-idp:AdminAddUserToGroup", template)
         self.assertIn("cognito-idp:AdminDisableUser", template)
+
+    def test_template_publishes_exact_non_secret_auth_table_identifiers(self):
+        template = (REPO_ROOT / "template.yaml").read_text(encoding="utf-8")
+
+        self.assertEqual(template.count("Type: AWS::SSM::Parameter\n"), 2)
+        self.assertIn("AuthExternalEnvironmentByRuntime:", template)
+        self.assertIn("prod:\n      Name: production", template)
+        expectations = {
+            "AuthAdminSessionTableNameParameter": (
+                "/zoolanding/${ExternalEnvironment}/auth/session-table-name",
+                "AuthAdminSessionTable",
+            ),
+            "AuthAdminUserStateTableNameParameter": (
+                "/zoolanding/${ExternalEnvironment}/auth/user-state-table-name",
+                "AuthAdminUserStateTable",
+            ),
+        }
+        for logical_id, (parameter_name, table_id) in expectations.items():
+            match = re.search(
+                rf"(?m)^  {re.escape(logical_id)}:\n(?P<body>(?:(?!^  \S)[^\n]*(?:\n|$))*)",
+                template,
+            )
+            self.assertIsNotNone(match)
+            block = match.group(0)
+            self.assertIn("Type: AWS::SSM::Parameter", block)
+            self.assertIn(parameter_name, block)
+            self.assertIn(f"Ref: {table_id}", block)
+            self.assertNotIn("NoEcho", block)
+            for forbidden in ("secret", "credential", "token"):
+                self.assertNotIn(forbidden, block.lower())
 
     def test_workflows_enforce_dev_test_main_promotion_and_oidc_deploys(self):
         ci = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")

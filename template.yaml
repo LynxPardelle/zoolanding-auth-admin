@@ -28,6 +28,13 @@ Parameters:
       - ERROR
     Description: Lambda log level.
 
+Mappings:
+  AuthExternalEnvironmentByRuntime:
+    test:
+      Name: test
+    prod:
+      Name: production
+
 Globals:
   Function:
     Runtime: python3.13
@@ -100,6 +107,58 @@ Resources:
           KeyType: HASH
         - AttributeName: auditKey
           KeyType: RANGE
+
+  AuthAdminSessionTableNameParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name:
+        Fn::Sub:
+          - /zoolanding/${ExternalEnvironment}/auth/session-table-name
+          - ExternalEnvironment:
+              Fn::FindInMap:
+                - AuthExternalEnvironmentByRuntime
+                - Ref: EnvironmentName
+                - Name
+      Type: String
+      Tier: Standard
+      Value:
+        Ref: AuthAdminSessionTable
+      Description: Environment-scoped Auth Admin session table identifier for dependent services.
+      Tags:
+        Project: Zoolandingpage
+        Component: AuthAdmin
+        ManagedBy: SAM
+        Environment:
+          Fn::FindInMap:
+            - AuthExternalEnvironmentByRuntime
+            - Ref: EnvironmentName
+            - Name
+
+  AuthAdminUserStateTableNameParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name:
+        Fn::Sub:
+          - /zoolanding/${ExternalEnvironment}/auth/user-state-table-name
+          - ExternalEnvironment:
+              Fn::FindInMap:
+                - AuthExternalEnvironmentByRuntime
+                - Ref: EnvironmentName
+                - Name
+      Type: String
+      Tier: Standard
+      Value:
+        Ref: AuthAdminUserStateTable
+      Description: Environment-scoped Auth Admin user-state table identifier for dependent services.
+      Tags:
+        Project: Zoolandingpage
+        Component: AuthAdmin
+        ManagedBy: SAM
+        Environment:
+          Fn::FindInMap:
+            - AuthExternalEnvironmentByRuntime
+            - Ref: EnvironmentName
+            - Name
 
   AuthAdminFunctionRole:
     Type: AWS::IAM::Role
