@@ -6,6 +6,7 @@ Keep entries chronological, scoped to one change or verification pass, and times
 
 ## Entries
 
+- [2026-08-31 — THN v2 consumer isolated from shared v1 role](2026-08-31-thn-registry-v2-v1-role-isolation.md)
 - [2026-08-31 — THN registry v2 live revision contract](2026-08-31-thn-registry-v2-live-revision.md)
 - [2026-08-31 — THN registry v2 consumer build](2026-08-31-thn-registry-v2-consumer-build.md)
 - [2026-06-17 through 2026-06-18 — Codex history migration](2026-06-17--2026-06-18-codex-history-migration.md)

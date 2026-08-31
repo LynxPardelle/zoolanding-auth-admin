@@ -22,42 +22,28 @@ class RepositoryContractTests(unittest.TestCase):
         self.assertIn("cognito-idp:AdminAddUserToGroup", template)
         self.assertIn("cognito-idp:AdminDisableUser", template)
 
-    def test_thn_v2_registry_permission_is_test_only_exact_key_and_read_only(self):
+    def test_shared_v1_auth_admin_role_has_no_thn_v2_registry_authority(self):
         template = (REPO_ROOT / "template.yaml").read_text(encoding="utf-8")
-        policy_match = re.search(
-            r"(?ms)^  AuthAdminRegistryV2ReadPolicy:.*?(?=^  [A-Za-z0-9]+:|^Outputs:|\Z)",
+        role_match = re.search(
+            r"(?ms)^  AuthAdminFunctionRole:.*?(?=^  [A-Za-z0-9]+:|^Outputs:|\Z)",
             template,
         )
 
-        self.assertIsNotNone(policy_match)
-        policy = policy_match.group(0)
-        self.assertIn("Type: AWS::IAM::Policy", policy)
-        self.assertIn("Condition: IsTestEnvironment", policy)
-        self.assertIn("- Ref: AuthAdminFunctionRole", policy)
-        self.assertIn("- dynamodb:GetItem", policy)
-        self.assertIn(
+        self.assertIsNotNone(role_match)
+        role = role_match.group(0)
+        self.assertNotIn("ServiceBindingRegistryV2", role)
+        self.assertNotIn("SERVICE_BINDING#test#thn-journal-test-v2", role)
+        self.assertNotIn("AuthAdminRegistryV2ReadPolicy", template)
+        self.assertNotIn(
             "table/zoolanding-content-hub-test-ServiceBindingRegistryV2",
-            policy,
-        )
-        self.assertIn("dynamodb:LeadingKeys:", policy)
-        self.assertIn("- SERVICE_BINDING#test#thn-journal-test-v2", policy)
-        for forbidden_action in (
-            "dynamodb:BatchGetItem",
-            "dynamodb:DeleteItem",
-            "dynamodb:PutItem",
-            "dynamodb:Query",
-            "dynamodb:Scan",
-            "dynamodb:TransactGetItems",
-            "dynamodb:TransactWriteItems",
-            "dynamodb:UpdateItem",
-        ):
-            self.assertNotIn(forbidden_action, policy)
-
-        self.assertRegex(
             template,
-            r"(?ms)^Conditions:\s+IsTestEnvironment:\s+Fn::Equals:\s+- Ref: EnvironmentName\s+- test",
         )
+        self.assertNotIn("SERVICE_BINDING#test#thn-journal-test-v2", template)
         self.assertIn("Fn::Sub: ${AWS::StackName}-FunctionRole", template)
+
+        handler = (REPO_ROOT / "lambda_function.py").read_text(encoding="utf-8")
+        self.assertNotIn("service_binding_registry_consumer_v2", handler)
+        self.assertTrue((REPO_ROOT / "service_binding_registry_consumer_v2.py").is_file())
 
     def test_workflows_enforce_dev_test_main_promotion_and_oidc_deploys(self):
         ci = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
