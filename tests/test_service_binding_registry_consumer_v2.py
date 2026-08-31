@@ -1,4 +1,5 @@
 import copy
+import inspect
 import unittest
 
 import service_binding_registry_consumer_v2 as consumer
@@ -100,7 +101,6 @@ def _marshal_item(item):
 def load(client, **overrides):
     arguments = {
         "expected_descriptor": EXPECTED_DESCRIPTOR,
-        "expected_registry_revision": 7,
         "trusted_resource_scope": TRUSTED_RESOURCE_SCOPE,
     }
     arguments.update(overrides)
@@ -176,18 +176,41 @@ class ServiceBindingRegistryConsumerV2Tests(unittest.TestCase):
             "descriptorVersionId": "test-v2",
             "descriptorSha256": "b" * 64,
             "authPolicyVersion": "journal-owner-v2",
-            "registryRevision": 8,
         }
         for field, value in record_mismatches.items():
             with self.subTest(field=field):
                 with self.assertRaises(consumer.ServiceBindingUnavailable):
                     load(FakeDynamoClient({"Item": active_record(**{field: value})}))
 
-        with self.assertRaises(consumer.ServiceBindingUnavailable):
-            load(
-                FakeDynamoClient({"Item": active_record()}),
-                expected_registry_revision=8,
-            )
+    def test_live_registry_revision_transition_is_accepted_without_local_cache(self):
+        self.assertNotIn(
+            "expected_registry_revision",
+            inspect.signature(consumer.load_active_service_binding).parameters,
+        )
+        client = FakeDynamoClient({"Item": active_record(registryRevision=7)})
+
+        first = load(client)
+        client.response = {
+            "Item": _marshal_item(active_record(registryRevision=8)),
+        }
+        second = load(client)
+
+        self.assertEqual(first["registryRevision"], 7)
+        self.assertEqual(second["registryRevision"], 8)
+        self.assertEqual(len(client.calls), 2)
+        self.assertTrue(all(call["ConsistentRead"] is True for call in client.calls))
+
+    def test_malformed_nonpositive_or_boolean_row_revision_fails_closed(self):
+        records = {
+            "malformed-string": active_record(registryRevision="7"),
+            "zero": active_record(registryRevision=0),
+            "negative": active_record(registryRevision=-1),
+            "boolean": active_record(registryRevision=True),
+        }
+        for label, record in records.items():
+            with self.subTest(label=label):
+                with self.assertRaises(consumer.ServiceBindingUnavailable):
+                    load(FakeDynamoClient({"Item": record}))
 
     def test_fails_closed_on_untrusted_resources_or_malformed_closed_record(self):
         bad_resource = active_record()
@@ -217,7 +240,6 @@ class ServiceBindingRegistryConsumerV2Tests(unittest.TestCase):
         cases = (
             {"expected_descriptor": {**EXPECTED_DESCRIPTOR, "unknown": "value"}},
             {"expected_descriptor": {**EXPECTED_DESCRIPTOR, "descriptorSha256": "not-a-hash"}},
-            {"expected_registry_revision": True},
             {"trusted_resource_scope": {**TRUSTED_RESOURCE_SCOPE, "region": "invalid"}},
         )
 

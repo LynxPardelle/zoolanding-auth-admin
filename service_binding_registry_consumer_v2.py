@@ -196,7 +196,6 @@ def _validate_record(
     item: Any,
     *,
     expected_descriptor: Mapping[str, str],
-    expected_registry_revision: int,
     trusted_resource_scope: Mapping[str, str],
 ) -> dict[str, Any]:
     if not isinstance(item, Mapping) or set(item) != _RECORD_FIELDS:
@@ -205,9 +204,7 @@ def _validate_record(
         _reject()
     if any(item.get(field) != value for field, value in expected_descriptor.items()):
         _reject()
-    if type(item.get("registryRevision")) is not int:
-        _reject()
-    if item.get("registryRevision") != expected_registry_revision:
+    if type(item.get("registryRevision")) is not int or item["registryRevision"] < 1:
         _reject()
     if type(item.get("writerEpoch")) is not int or item["writerEpoch"] < 1:
         _reject()
@@ -224,7 +221,6 @@ def load_active_service_binding(
     dynamodb_client: Any,
     *,
     expected_descriptor: Mapping[str, Any],
-    expected_registry_revision: int,
     trusted_resource_scope: Mapping[str, Any],
 ) -> dict[str, Any]:
     """Load and revalidate the single active authoritative THN v2 row.
@@ -236,8 +232,6 @@ def load_active_service_binding(
     """
 
     expected = _validate_expected_descriptor(expected_descriptor)
-    if type(expected_registry_revision) is not int or expected_registry_revision < 1:
-        _reject()
     scope = _validate_trusted_resource_scope(trusted_resource_scope)
     try:
         response = dynamodb_client.get_item(
@@ -254,7 +248,6 @@ def load_active_service_binding(
         return _validate_record(
             item,
             expected_descriptor=expected,
-            expected_registry_revision=expected_registry_revision,
             trusted_resource_scope=scope,
         )
     except RegistryConsumerError:
