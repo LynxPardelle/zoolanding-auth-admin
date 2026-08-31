@@ -1,4 +1,5 @@
 import pathlib
+import re
 import unittest
 
 
@@ -20,6 +21,43 @@ class RepositoryContractTests(unittest.TestCase):
         self.assertNotIn("userpool/*", template)
         self.assertIn("cognito-idp:AdminAddUserToGroup", template)
         self.assertIn("cognito-idp:AdminDisableUser", template)
+
+    def test_thn_v2_registry_permission_is_test_only_exact_key_and_read_only(self):
+        template = (REPO_ROOT / "template.yaml").read_text(encoding="utf-8")
+        policy_match = re.search(
+            r"(?ms)^  AuthAdminRegistryV2ReadPolicy:.*?(?=^  [A-Za-z0-9]+:|^Outputs:|\Z)",
+            template,
+        )
+
+        self.assertIsNotNone(policy_match)
+        policy = policy_match.group(0)
+        self.assertIn("Type: AWS::IAM::Policy", policy)
+        self.assertIn("Condition: IsTestEnvironment", policy)
+        self.assertIn("- Ref: AuthAdminFunctionRole", policy)
+        self.assertIn("- dynamodb:GetItem", policy)
+        self.assertIn(
+            "table/zoolanding-content-hub-test-ServiceBindingRegistryV2",
+            policy,
+        )
+        self.assertIn("dynamodb:LeadingKeys:", policy)
+        self.assertIn("- SERVICE_BINDING#test#thn-journal-test-v2", policy)
+        for forbidden_action in (
+            "dynamodb:BatchGetItem",
+            "dynamodb:DeleteItem",
+            "dynamodb:PutItem",
+            "dynamodb:Query",
+            "dynamodb:Scan",
+            "dynamodb:TransactGetItems",
+            "dynamodb:TransactWriteItems",
+            "dynamodb:UpdateItem",
+        ):
+            self.assertNotIn(forbidden_action, policy)
+
+        self.assertRegex(
+            template,
+            r"(?ms)^Conditions:\s+IsTestEnvironment:\s+Fn::Equals:\s+- Ref: EnvironmentName\s+- test",
+        )
+        self.assertIn("Fn::Sub: ${AWS::StackName}-FunctionRole", template)
 
     def test_workflows_enforce_dev_test_main_promotion_and_oidc_deploys(self):
         ci = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")

@@ -35,6 +35,12 @@ Globals:
     MemorySize: 256
     Tracing: PassThrough
 
+Conditions:
+  IsTestEnvironment:
+    Fn::Equals:
+      - Ref: EnvironmentName
+      - test
+
 Resources:
   AuthAdminApi:
     Type: AWS::Serverless::HttpApi
@@ -152,6 +158,27 @@ Resources:
                   - Fn::GetAtt:
                       - AuthAdminAuditTable
                       - Arn
+
+  AuthAdminRegistryV2ReadPolicy:
+    Type: AWS::IAM::Policy
+    Condition: IsTestEnvironment
+    Properties:
+      PolicyName: ReadExactThnServiceBindingRegistryV2
+      Roles:
+        - Ref: AuthAdminFunctionRole
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: ReadExactThnServiceBindingRegistryV2
+            Effect: Allow
+            Action:
+              - dynamodb:GetItem
+            Resource:
+              Fn::Sub: arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/zoolanding-content-hub-test-ServiceBindingRegistryV2
+            Condition:
+              ForAllValues:StringEquals:
+                dynamodb:LeadingKeys:
+                  - SERVICE_BINDING#test#thn-journal-test-v2
 
   AuthAdminFunction:
     Type: AWS::Serverless::Function
