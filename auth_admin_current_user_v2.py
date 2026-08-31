@@ -46,7 +46,7 @@ class CurrentUserStateUnavailable(RuntimeError):
 
 
 def _reject() -> NoReturn:
-    raise CurrentUserStateUnavailable("current user state is unavailable")
+    raise CurrentUserStateUnavailable("current user state is unavailable") from None
 
 
 def _validate_scope(value: Any) -> dict[str, str]:

@@ -1,6 +1,7 @@
 import copy
 import inspect
 from pathlib import Path
+import traceback
 import unittest
 
 import auth_admin_current_user_v2 as current_user
@@ -264,6 +265,22 @@ class AuthAdminCurrentUserV2ContractTests(unittest.TestCase):
                 subject="owner-123",
             )
         )
+
+    def test_provider_error_context_is_suppressed_from_sanitized_traceback(self):
+        sentinel = "PRIVATE_PROVIDER_SENTINEL"
+        client = FakeDynamoClient(provider_error=RuntimeError(sentinel))
+
+        with self.assertRaises(current_user.CurrentUserStateUnavailable) as caught:
+            current_user.load_current_user_state(
+                client,
+                scope=SCOPE,
+                subject="owner-123",
+            )
+
+        rendered_traceback = "".join(traceback.format_exception(caught.exception))
+        self.assertTrue(caught.exception.__suppress_context__)
+        self.assertNotIn(sentinel, rendered_traceback)
+        self.assertEqual(str(caught.exception), "current user state is unavailable")
 
     def test_disable_is_a_purpose_version_enabled_cas_and_preserves_purpose(self):
         client = FakeDynamoClient(
