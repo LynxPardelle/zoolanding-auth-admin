@@ -415,7 +415,8 @@ class AuthAdminV2TemplateContractTests(unittest.TestCase):
             pool,
             r"(?ms)AdminCreateUserConfig:\s*\n\s+AllowAdminCreateUserOnly: true\s*$",
         )
-        self.assertRegex(pool, r"(?m)^      MfaConfiguration: ON\s*$")
+        # YAML 1.1 coerces bare ON to a boolean; Cognito requires the string.
+        self.assertRegex(pool, r"(?m)^      MfaConfiguration: ['\"]ON['\"]\s*$")
         self.assertRegex(
             pool,
             r"(?ms)EnabledMfas:\s*\n\s+- SOFTWARE_TOKEN_MFA\s*$",

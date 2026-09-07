@@ -49,7 +49,9 @@ jobs:
           python -m pip install --disable-pip-version-check -r requirements.txt
           python -m pip check
           python -m unittest discover -s tests -p 'test_*.py'
-          sam validate --lint
+          python -m venv "$RUNNER_TEMP/thn-cfn-lint"
+          "$RUNNER_TEMP/thn-cfn-lint/bin/python" -m pip install --disable-pip-version-check cfn-lint==1.56.0
+          "$RUNNER_TEMP/thn-cfn-lint/bin/cfn-lint" -t template.yaml -r us-east-1
           sam build --no-cached
           python tools/check_lambda_artifacts.py
           mkdir -p logs/thn-ci
