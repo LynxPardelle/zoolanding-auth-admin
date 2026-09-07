@@ -125,7 +125,11 @@ class FakeDynamoClient:
             or item["enabled"] is not values[":expectedEnabled"]
         ):
             raise RuntimeError("ConditionalCheckFailedException: private stale state")
-        item["enabled"] = values[":disabled"]
+        item["enabled"] = (
+            values[":disabled"]
+            if ":disabled" in values
+            else values[":nextEnabled"]
+        )
         item["sessionVersion"] = values[":nextVersion"]
         return {"Attributes": marshal_item(item)}
 
@@ -359,6 +363,65 @@ class AuthAdminCurrentUserV2ContractTests(unittest.TestCase):
         self.assertEqual(persisted["sessionVersion"], 6)
         self.assertIs(persisted["enabled"], False)
         self.assertEqual([name for name, _ in client.calls].count("update_item"), 1)
+
+    def test_enable_is_a_disabled_to_active_cas_and_advances_session_version(self):
+        client = FakeDynamoClient([state(session_version=1, enabled=False)])
+
+        result = current_user.enable_current_user_state(
+            client,
+            scope=SCOPE,
+            subject="owner-123",
+            account_purpose="client-owner",
+            session_version=1,
+        )
+
+        self.assertEqual(result, state(session_version=2, enabled=True))
+        self.assertEqual([name for name, _ in client.calls], ["get_item", "update_item"])
+        request = client.calls[1][1]
+        self.assertEqual(
+            {
+                key: unmarshal_value(value)
+                for key, value in request["ExpressionAttributeValues"].items()
+            },
+            {
+                ":expectedPurpose": "client-owner",
+                ":expectedVersion": 1,
+                ":expectedEnabled": False,
+                ":nextEnabled": True,
+                ":nextVersion": 2,
+            },
+        )
+
+    def test_session_version_repair_preserves_purpose_and_enabled_state(self):
+        for enabled in (False, True):
+            with self.subTest(enabled=enabled):
+                client = FakeDynamoClient(
+                    [state(session_version=8, enabled=enabled)]
+                )
+
+                result = current_user.repair_current_user_session_version(
+                    client,
+                    scope=SCOPE,
+                    subject="owner-123",
+                    account_purpose="client-owner",
+                    session_version=8,
+                    enabled=enabled,
+                )
+
+                self.assertEqual(
+                    result,
+                    state(session_version=9, enabled=enabled),
+                )
+                request = client.calls[1][1]
+                values = {
+                    key: unmarshal_value(value)
+                    for key, value in request["ExpressionAttributeValues"].items()
+                }
+                self.assertEqual(values[":expectedPurpose"], "client-owner")
+                self.assertEqual(values[":expectedVersion"], 8)
+                self.assertIs(values[":expectedEnabled"], enabled)
+                self.assertIs(values[":nextEnabled"], enabled)
+                self.assertEqual(values[":nextVersion"], 9)
 
     def test_disable_rejects_wrong_purpose_version_or_inactive_state_before_update(self):
         cases = (

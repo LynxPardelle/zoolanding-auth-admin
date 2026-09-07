@@ -27,6 +27,154 @@ Parameters:
       - WARNING
       - ERROR
     Description: Lambda log level.
+  EnableThnAuthAdminV2:
+    Type: String
+    Default: 'false'
+    AllowedValues:
+      - 'false'
+      - 'true'
+    Description: Fail-closed opt-in for the isolated The Hair Narrative TEST auth boundary.
+  ProvisionThnAuthAdminV2State:
+    Type: String
+    Default: 'false'
+    AllowedValues:
+      - 'false'
+      - 'true'
+    Description: Fail-closed opt-in for retained The Hair Narrative TEST auth state resources.
+  ThnAuthAdminV2TerminationProtectionGate:
+    Type: String
+    Default: BLOCKED
+    AllowedValues:
+      - BLOCKED
+      - CONFIRMED_ENABLED
+    Description: Blocks v2 activation until the deployment preflight confirms CloudFormation stack termination protection.
+  ThnAuthAdminV2DescriptorVersionId:
+    Type: String
+    Default: BLOCKED
+    AllowedPattern: '^(BLOCKED|[A-Za-z0-9][A-Za-z0-9._:-]{0,127})$'
+    Description: Immutable active service-binding descriptor version for THN Auth Admin v2.
+  ThnAuthAdminV2DescriptorSha256:
+    Type: String
+    Default: '0000000000000000000000000000000000000000000000000000000000000000'
+    AllowedPattern: '^[a-f0-9]{64}$'
+    Description: SHA-256 of the reviewed active service-binding descriptor.
+  ThnAuthAdminV2AuthPolicyVersion:
+    Type: String
+    Default: BLOCKED
+    AllowedPattern: '^(BLOCKED|[A-Za-z0-9][A-Za-z0-9._:-]{0,127})$'
+    Description: Immutable THN Auth Admin v2 authorization-policy version.
+  ThnAuthAdminV2OriginHeaderSha256Current:
+    Type: String
+    Default: '0000000000000000000000000000000000000000000000000000000000000000'
+    AllowedPattern: '^[a-f0-9]{64}$'
+    NoEcho: true
+    Description: SHA-256 digest of the current CloudFront-to-Auth-Admin origin proof.
+  ThnAuthAdminV2OriginHeaderSha256Previous:
+    Type: String
+    Default: '0000000000000000000000000000000000000000000000000000000000000000'
+    AllowedPattern: '^[a-f0-9]{64}$'
+    NoEcho: true
+    Description: Optional previous origin-proof digest retained only during rotation.
+
+Metadata:
+  ThnAuthAdminV2DeploymentGuards:
+    GateParameter: ThnAuthAdminV2TerminationProtectionGate
+    Required: true
+    FailureMode: BLOCK
+    DefaultState: BLOCKED
+    Enforcement: The TEST deployment workflow preflight must enable and verify CloudFormation termination protection before creating a change set.
+
+Rules:
+  ThnAuthAdminV2StateProvisioningRule:
+    RuleCondition:
+      Fn::Equals:
+        - Ref: ProvisionThnAuthAdminV2State
+        - 'true'
+    Assertions:
+      - Assert:
+          Fn::Equals:
+            - Ref: EnvironmentName
+            - test
+        AssertDescription: THN Auth Admin v2 retained state is TEST-only.
+  ThnAuthAdminV2ActivationRule:
+    RuleCondition:
+      Fn::Equals:
+        - Ref: EnableThnAuthAdminV2
+        - 'true'
+    Assertions:
+      - Assert:
+          Fn::Equals:
+            - Ref: EnvironmentName
+            - test
+        AssertDescription: THN Auth Admin v2 is TEST-only.
+      - Assert:
+          Fn::Equals:
+            - Ref: ProvisionThnAuthAdminV2State
+            - 'true'
+        AssertDescription: Retained THN Auth Admin v2 state must be provisioned before activation.
+      - Assert:
+          Fn::Equals:
+            - Ref: ThnAuthAdminV2TerminationProtectionGate
+            - CONFIRMED_ENABLED
+        AssertDescription: Stack termination protection must be confirmed before THN Auth Admin v2 activation.
+      - Assert:
+          Fn::Not:
+            - Fn::Equals:
+                - Ref: ThnAuthAdminV2DescriptorVersionId
+                - BLOCKED
+        AssertDescription: A reviewed descriptor version is required for THN Auth Admin v2.
+      - Assert:
+          Fn::Not:
+            - Fn::Equals:
+                - Ref: ThnAuthAdminV2DescriptorSha256
+                - '0000000000000000000000000000000000000000000000000000000000000000'
+        AssertDescription: A reviewed descriptor digest is required for THN Auth Admin v2.
+      - Assert:
+          Fn::Not:
+            - Fn::Equals:
+                - Ref: ThnAuthAdminV2AuthPolicyVersion
+                - BLOCKED
+        AssertDescription: A reviewed authorization-policy version is required for THN Auth Admin v2.
+      - Assert:
+          Fn::Not:
+            - Fn::Equals:
+                - Ref: ThnAuthAdminV2OriginHeaderSha256Current
+                - '0000000000000000000000000000000000000000000000000000000000000000'
+        AssertDescription: A reviewed origin-proof digest is required for THN Auth Admin v2.
+      - Assert:
+          Fn::Or:
+            - Fn::Equals:
+                - Ref: ThnAuthAdminV2OriginHeaderSha256Previous
+                - '0000000000000000000000000000000000000000000000000000000000000000'
+            - Fn::Not:
+                - Fn::Equals:
+                    - Ref: ThnAuthAdminV2OriginHeaderSha256Previous
+                    - Ref: ThnAuthAdminV2OriginHeaderSha256Current
+        AssertDescription: Origin-proof rotation digests must be distinct unless previous is disabled.
+
+Conditions:
+  IsThnAuthAdminV2StateProvisioned:
+    Fn::And:
+      - Fn::Equals:
+          - Ref: EnvironmentName
+          - test
+      - Fn::Equals:
+          - Ref: ProvisionThnAuthAdminV2State
+          - 'true'
+  IsThnAuthAdminV2Enabled:
+    Fn::And:
+      - Fn::Equals:
+          - Ref: EnvironmentName
+          - test
+      - Fn::Equals:
+          - Ref: EnableThnAuthAdminV2
+          - 'true'
+      - Fn::Equals:
+          - Ref: ProvisionThnAuthAdminV2State
+          - 'true'
+      - Fn::Equals:
+          - Ref: ThnAuthAdminV2TerminationProtectionGate
+          - CONFIRMED_ENABLED
 
 Globals:
   Function:
@@ -155,6 +303,9 @@ Resources:
 
   AuthAdminFunction:
     Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: makefile
+      BuildArchitecture: x86_64
     Properties:
       CodeUri: .
       Handler: lambda_function.lambda_handler
@@ -285,6 +436,1028 @@ Resources:
               Ref: AuthAdminApi
             Method: POST
             Path: /auth/admin/users/{subject}/mfa/reset
+
+  ThnAuthAdminV2SessionTable:
+    Type: AWS::DynamoDB::Table
+    Condition: IsThnAuthAdminV2StateProvisioned
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: zoolanding-auth-admin-test-ThnSessionV2
+      BillingMode: PAY_PER_REQUEST
+      DeletionProtectionEnabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+      AttributeDefinitions:
+        - AttributeName: sessionIdHash
+          AttributeType: S
+      KeySchema:
+        - AttributeName: sessionIdHash
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: expiresAt
+        Enabled: true
+
+  ThnAuthAdminV2CurrentUserStateTable:
+    Type: AWS::DynamoDB::Table
+    Condition: IsThnAuthAdminV2StateProvisioned
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: zoolanding-auth-admin-test-ThnCurrentUserStateV2
+      BillingMode: PAY_PER_REQUEST
+      DeletionProtectionEnabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+
+  ThnAuthAdminV2ChallengeTable:
+    Type: AWS::DynamoDB::Table
+    Condition: IsThnAuthAdminV2StateProvisioned
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: zoolanding-auth-admin-test-ThnChallengeV2
+      BillingMode: PAY_PER_REQUEST
+      DeletionProtectionEnabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+      AttributeDefinitions:
+        - AttributeName: stateIdHash
+          AttributeType: S
+      KeySchema:
+        - AttributeName: stateIdHash
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: expiresAt
+        Enabled: true
+
+  ThnAuthAdminV2ThrottleTable:
+    Type: AWS::DynamoDB::Table
+    Condition: IsThnAuthAdminV2StateProvisioned
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: zoolanding-auth-admin-test-ThnThrottleV2
+      BillingMode: PAY_PER_REQUEST
+      DeletionProtectionEnabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+      AttributeDefinitions:
+        - AttributeName: failureKey
+          AttributeType: S
+      KeySchema:
+        - AttributeName: failureKey
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: expiresAt
+        Enabled: true
+
+  ThnAuthAdminV2AuditTable:
+    Type: AWS::DynamoDB::Table
+    Condition: IsThnAuthAdminV2StateProvisioned
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: zoolanding-auth-admin-test-ThnAuditV2
+      BillingMode: PAY_PER_REQUEST
+      DeletionProtectionEnabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      ResourcePolicy:
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Sid: DenyThnAuthV2AuditMutationAndDeletion
+              Effect: Deny
+              Principal: '*'
+              Action:
+                - dynamodb:BatchWriteItem
+                - dynamodb:DeleteItem
+                - dynamodb:PartiQLDelete
+                - dynamodb:PartiQLInsert
+                - dynamodb:PartiQLUpdate
+                - dynamodb:UpdateItem
+              Resource:
+                Fn::Sub: arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/zoolanding-auth-admin-test-ThnAuditV2
+            - Sid: DenyThnAuthV2AuditPutFromNonMediator
+              Effect: Deny
+              Principal: '*'
+              Action:
+                - dynamodb:PutItem
+              Resource:
+                Fn::Sub: arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/zoolanding-auth-admin-test-ThnAuditV2
+              Condition:
+                ArnNotEquals:
+                  aws:PrincipalArn:
+                    Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/zoolanding-auth-admin-test-ThnOwnerOperatorV2Role
+
+  ThnAuthAdminV2UserPool:
+    Type: AWS::Cognito::UserPool
+    Condition: IsThnAuthAdminV2StateProvisioned
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      UserPoolName: zoolanding-auth-admin-test-ThnAuthAdminV2
+      DeletionProtection: ACTIVE
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true
+      UsernameAttributes:
+        - email
+      AutoVerifiedAttributes:
+        - email
+      UsernameConfiguration:
+        CaseSensitive: false
+      MfaConfiguration: ON
+      EnabledMfas:
+        - SOFTWARE_TOKEN_MFA
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+          - Name: admin_only
+            Priority: 1
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 14
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+          RequireUppercase: true
+          TemporaryPasswordValidityDays: 1
+      Schema:
+        - Name: email
+          AttributeDataType: String
+          Mutable: false
+          Required: true
+
+  ThnAuthAdminV2UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Condition: IsThnAuthAdminV2StateProvisioned
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      ClientName: zoolanding-auth-admin-test-ThnAuthAdminV2Client
+      UserPoolId:
+        Ref: ThnAuthAdminV2UserPool
+      GenerateSecret: false
+      PreventUserExistenceErrors: ENABLED
+      EnableTokenRevocation: true
+      AuthSessionValidity: 5
+      ExplicitAuthFlows:
+        - ALLOW_ADMIN_USER_PASSWORD_AUTH
+
+  ThnAuthAdminV2OwnerGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Condition: IsThnAuthAdminV2StateProvisioned
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      GroupName: journal-owner
+      UserPoolId:
+        Ref: ThnAuthAdminV2UserPool
+      Description: Dedicated The Hair Narrative journal owner group.
+
+  ThnAuthAdminV2OwnerOperatorFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Condition: IsThnAuthAdminV2StateProvisioned
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: /aws/lambda/zoolanding-auth-admin-test-ThnOwnerOperatorV2
+      RetentionInDays: 30
+
+  ThnAuthAdminV2OwnerOperatorFunctionRole:
+    Type: AWS::IAM::Role
+    Condition: IsThnAuthAdminV2Enabled
+    Properties:
+      RoleName: zoolanding-auth-admin-test-ThnOwnerOperatorV2Role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: MutateExactThnOwnerV2
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: ThnOwnerOperatorV2Logs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/zoolanding-auth-admin-test-ThnOwnerOperatorV2:*
+              - Sid: ResolveExactThnAuthStackResources
+                Effect: Allow
+                Action:
+                  - cloudformation:DescribeStackResource
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/zoolanding-auth-admin-test/*
+              - Sid: MutateExactThnOwnerPool
+                Effect: Allow
+                Action:
+                  - cognito-idp:AdminAddUserToGroup
+                  - cognito-idp:AdminCreateUser
+                  - cognito-idp:AdminDeleteSoftwareToken
+                  - cognito-idp:AdminDisableUser
+                  - cognito-idp:AdminEnableUser
+                  - cognito-idp:AdminGetUser
+                  - cognito-idp:AdminListGroupsForUser
+                  - cognito-idp:AdminRemoveUserFromGroup
+                  - cognito-idp:AdminSetUserPassword
+                  - cognito-idp:AdminUserGlobalSignOut
+                  - cognito-idp:DescribeUserPool
+                  - cognito-idp:DescribeUserPoolClient
+                  - cognito-idp:GetGroup
+                  - cognito-idp:ListUsersInGroup
+                Resource:
+                  Fn::GetAtt:
+                    - ThnAuthAdminV2UserPool
+                    - Arn
+              - Sid: ReadAndUpdateExactThnOwnerState
+                Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:UpdateItem
+                Resource:
+                  Fn::GetAtt:
+                    - ThnAuthAdminV2CurrentUserStateTable
+                    - Arn
+                Condition:
+                  ForAllValues:StringEquals:
+                    dynamodb:LeadingKeys:
+                      - CURRENT_USER#test#thn-journal-test-v2
+              - Sid: TransactCreateExactThnOwnerState
+                Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                Resource:
+                  Fn::GetAtt:
+                    - ThnAuthAdminV2CurrentUserStateTable
+                    - Arn
+                Condition:
+                  ForAllValues:StringEquals:
+                    dynamodb:LeadingKeys:
+                      - CURRENT_USER#test#thn-journal-test-v2
+                  StringEquals:
+                    dynamodb:EnclosingOperation: TransactWriteItems
+              - Sid: AppendExactThnOwnerAuditEvents
+                Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                Resource:
+                  Fn::GetAtt:
+                    - ThnAuthAdminV2AuditTable
+                    - Arn
+                Condition:
+                  ForAllValues:StringEquals:
+                    dynamodb:LeadingKeys:
+                      - AUDIT#test#thn-journal-test-v2
+
+  ThnAuthAdminV2OwnerOperatorFunction:
+    Type: AWS::Serverless::Function
+    Condition: IsThnAuthAdminV2Enabled
+    Metadata:
+      BuildMethod: makefile
+    DependsOn:
+      - ThnAuthAdminV2OwnerOperatorFunctionLogGroup
+    Properties:
+      CodeUri: .
+      Handler: auth_admin_owner_operator_v2.lambda_handler
+      FunctionName: zoolanding-auth-admin-test-ThnOwnerOperatorV2
+      Description: Signed function URL mediator for the single THN TEST owner lifecycle.
+      Role:
+        Fn::GetAtt:
+          - ThnAuthAdminV2OwnerOperatorFunctionRole
+          - Arn
+      AutoPublishAlias: test
+      ReservedConcurrentExecutions: 1
+      Timeout: 60
+
+  ThnAuthAdminV2OwnerOperatorFunctionUrl:
+    Type: AWS::Lambda::Url
+    Condition: IsThnAuthAdminV2Enabled
+    DependsOn:
+      - ThnAuthAdminV2OwnerOperatorFunctionAliastest
+    Properties:
+      AuthType: AWS_IAM
+      InvokeMode: BUFFERED
+      Qualifier: test
+      TargetFunctionArn:
+        Fn::GetAtt:
+          - ThnAuthAdminV2OwnerOperatorFunction
+          - Arn
+
+  ThnAuthAdminV2OwnerOperatorPolicy:
+    Type: AWS::IAM::Policy
+    Condition: IsThnAuthAdminV2Enabled
+    Properties:
+      PolicyName: OperateExactThnOwnerV2
+      Roles:
+        - zoolanding-thn-registry-test-operator
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: ReadExactThnOwnerMediatorUrl
+            Effect: Allow
+            Action:
+              - lambda:GetFunctionUrlConfig
+            Resource:
+              Fn::Sub:
+                - ${MediatorArn}:test
+                - MediatorArn:
+                    Fn::GetAtt:
+                      - ThnAuthAdminV2OwnerOperatorFunction
+                      - Arn
+          - Sid: InvokeExactThnOwnerMediatorUrl
+            Effect: Allow
+            Action:
+              - lambda:InvokeFunctionUrl
+            Resource:
+              Fn::Sub:
+                - ${MediatorArn}:test
+                - MediatorArn:
+                    Fn::GetAtt:
+                      - ThnAuthAdminV2OwnerOperatorFunction
+                      - Arn
+            Condition:
+              StringEquals:
+                lambda:FunctionUrlAuthType: AWS_IAM
+          - Sid: InvokeExactThnOwnerMediatorOnlyViaUrl
+            Effect: Allow
+            Action:
+              - lambda:InvokeFunction
+            Resource:
+              Fn::Sub:
+                - ${MediatorArn}:test
+                - MediatorArn:
+                    Fn::GetAtt:
+                      - ThnAuthAdminV2OwnerOperatorFunction
+                      - Arn
+            Condition:
+              Bool:
+                lambda:InvokedViaFunctionUrl: 'true'
+
+  ThnAuthAdminV2OwnerOperatorAliasPolicy:
+    Type: AWS::Lambda::ResourcePolicy
+    Condition: IsThnAuthAdminV2Enabled
+    DependsOn:
+      - ThnAuthAdminV2OwnerOperatorFunctionAliastest
+    Properties:
+      ResourceArn:
+        Fn::Sub:
+          - ${MediatorArn}:test
+          - MediatorArn:
+              Fn::GetAtt:
+                - ThnAuthAdminV2OwnerOperatorFunction
+                - Arn
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DenyInvokeFromEveryOtherPrincipal
+            Effect: Deny
+            Principal: '*'
+            Action:
+              - lambda:InvokeFunction
+              - lambda:InvokeFunctionUrl
+            Resource:
+              Fn::Sub:
+                - ${MediatorArn}:test
+                - MediatorArn:
+                    Fn::GetAtt:
+                      - ThnAuthAdminV2OwnerOperatorFunction
+                      - Arn
+            Condition:
+              ArnNotEquals:
+                aws:PrincipalArn:
+                  Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/zoolanding-thn-registry-test-operator
+          - Sid: DenyDirectInvokeFromEveryPrincipal
+            Effect: Deny
+            Principal: '*'
+            Action: lambda:InvokeFunction
+            Resource:
+              Fn::Sub:
+                - ${MediatorArn}:test
+                - MediatorArn:
+                    Fn::GetAtt:
+                      - ThnAuthAdminV2OwnerOperatorFunction
+                      - Arn
+            Condition:
+              BoolIfExists:
+                lambda:InvokedViaFunctionUrl: 'false'
+          - Sid: AllowFunctionUrlFromNamedOperator
+            Effect: Allow
+            Principal:
+              AWS:
+                Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/zoolanding-thn-registry-test-operator
+            Action: lambda:InvokeFunctionUrl
+            Resource:
+              Fn::Sub:
+                - ${MediatorArn}:test
+                - MediatorArn:
+                    Fn::GetAtt:
+                      - ThnAuthAdminV2OwnerOperatorFunction
+                      - Arn
+            Condition:
+              StringEquals:
+                lambda:FunctionUrlAuthType: AWS_IAM
+          - Sid: AllowInvokeViaFunctionUrlFromNamedOperator
+            Effect: Allow
+            Principal:
+              AWS:
+                Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/zoolanding-thn-registry-test-operator
+            Action: lambda:InvokeFunction
+            Resource:
+              Fn::Sub:
+                - ${MediatorArn}:test
+                - MediatorArn:
+                    Fn::GetAtt:
+                      - ThnAuthAdminV2OwnerOperatorFunction
+                      - Arn
+            Condition:
+              Bool:
+                lambda:InvokedViaFunctionUrl: 'true'
+
+  ThnAuthAdminV2FunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Condition: IsThnAuthAdminV2StateProvisioned
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: /aws/lambda/zoolanding-auth-admin-test-ThnAuthAdminV2Function
+      RetentionInDays: 30
+
+  ThnAuthAdminV2ApiAccessLogGroup:
+    Type: AWS::Logs::LogGroup
+    Condition: IsThnAuthAdminV2StateProvisioned
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: /aws/apigateway/zoolanding-auth-admin-test-ThnAuthAdminV2Api
+      RetentionInDays: 30
+
+  ThnAuthAdminV2OriginAuthorizerFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Condition: IsThnAuthAdminV2StateProvisioned
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: /aws/lambda/zoolanding-auth-test-ThnV2OriginAuthorizer
+      RetentionInDays: 30
+
+  ThnAuthAdminV2Api:
+    Type: AWS::Serverless::HttpApi
+    Condition: IsThnAuthAdminV2Enabled
+    Properties:
+      StageName: test
+      DefaultRouteSettings:
+        DetailedMetricsEnabled: true
+        ThrottlingBurstLimit: 10
+        ThrottlingRateLimit: 5
+      AccessLogSettings:
+        DestinationArn:
+          Fn::GetAtt:
+            - ThnAuthAdminV2ApiAccessLogGroup
+            - Arn
+        Format: '{"requestId":"$context.requestId","routeKey":"$context.routeKey","status":"$context.status","responseLength":"$context.responseLength"}'
+
+  ThnAuthAdminV2FunctionRole:
+    Type: AWS::IAM::Role
+    Condition: IsThnAuthAdminV2Enabled
+    Properties:
+      RoleName: zoolanding-auth-admin-test-ThnAuthAdminV2FunctionRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ExactThnAuthAdminV2Runtime
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: ThnAuthV2FunctionLogs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/zoolanding-auth-admin-test-ThnAuthAdminV2Function:*
+              - Sid: ThnAuthV2CognitoServerAuth
+                Effect: Allow
+                Action:
+                  - cognito-idp:AdminGetUser
+                  - cognito-idp:AdminInitiateAuth
+                  - cognito-idp:AdminListGroupsForUser
+                  - cognito-idp:AdminRespondToAuthChallenge
+                Resource:
+                  Fn::GetAtt:
+                    - ThnAuthAdminV2UserPool
+                    - Arn
+              - Sid: ThnAuthV2RegistryRead
+                Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/zoolanding-content-hub-test-ServiceBindingRegistryV2
+                Condition:
+                  ForAllValues:StringEquals:
+                    dynamodb:LeadingKeys:
+                      - SERVICE_BINDING#test#thn-journal-test-v2
+              - Sid: ThnAuthV2SessionRead
+                Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                Resource:
+                  Fn::GetAtt:
+                    - ThnAuthAdminV2SessionTable
+                    - Arn
+              - Sid: ThnAuthV2SessionUpdate
+                Effect: Allow
+                Action:
+                  - dynamodb:UpdateItem
+                Resource:
+                  Fn::GetAtt:
+                    - ThnAuthAdminV2SessionTable
+                    - Arn
+              - Sid: ThnAuthV2SessionTransactionalPut
+                Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                Resource:
+                  Fn::GetAtt:
+                    - ThnAuthAdminV2SessionTable
+                    - Arn
+                Condition:
+                  StringEquals:
+                    dynamodb:EnclosingOperation: TransactWriteItems
+              - Sid: ThnAuthV2ChallengeRead
+                Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                Resource:
+                  Fn::GetAtt:
+                    - ThnAuthAdminV2ChallengeTable
+                    - Arn
+              - Sid: ThnAuthV2ChallengeWrite
+                Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                Resource:
+                  Fn::GetAtt:
+                    - ThnAuthAdminV2ChallengeTable
+                    - Arn
+              - Sid: ThnAuthV2ThrottleRead
+                Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                Resource:
+                  Fn::GetAtt:
+                    - ThnAuthAdminV2ThrottleTable
+                    - Arn
+              - Sid: ThnAuthV2ThrottleTransactionalPut
+                Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                Resource:
+                  Fn::GetAtt:
+                    - ThnAuthAdminV2ThrottleTable
+                    - Arn
+                Condition:
+                  StringEquals:
+                    dynamodb:EnclosingOperation: TransactWriteItems
+              - Sid: ThnAuthV2CurrentUserRead
+                Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                Resource:
+                  Fn::GetAtt:
+                    - ThnAuthAdminV2CurrentUserStateTable
+                    - Arn
+                Condition:
+                  ForAllValues:StringEquals:
+                    dynamodb:LeadingKeys:
+                      - CURRENT_USER#test#thn-journal-test-v2
+              - Sid: ThnAuthV2CurrentUserTransactionalCheck
+                Effect: Allow
+                Action:
+                  - dynamodb:ConditionCheckItem
+                Resource:
+                  Fn::GetAtt:
+                    - ThnAuthAdminV2CurrentUserStateTable
+                    - Arn
+                Condition:
+                  ForAllValues:StringEquals:
+                    dynamodb:LeadingKeys:
+                      - CURRENT_USER#test#thn-journal-test-v2
+                  StringEquals:
+                    dynamodb:EnclosingOperation: TransactWriteItems
+                  StringEqualsIfExists:
+                    dynamodb:ReturnValues: NONE
+  ThnAuthAdminV2OriginAuthorizerFunctionRole:
+    Type: AWS::IAM::Role
+    Condition: IsThnAuthAdminV2Enabled
+    Properties:
+      RoleName: zoolanding-auth-test-ThnV2OriginAuthorizerRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ExactThnAuthAdminV2OriginAuthorizerLogs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: ThnAuthV2OriginAuthorizerLogs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/zoolanding-auth-test-ThnV2OriginAuthorizer:*
+
+  ThnAuthAdminV2OriginAuthorizerFunction:
+    Type: AWS::Serverless::Function
+    Condition: IsThnAuthAdminV2Enabled
+    Metadata:
+      BuildMethod: makefile
+    DependsOn:
+      - ThnAuthAdminV2OriginAuthorizerFunctionLogGroup
+    Properties:
+      CodeUri: .
+      Handler: auth_admin_origin_authorizer_v2.lambda_handler
+      FunctionName: zoolanding-auth-test-ThnV2OriginAuthorizer
+      Description: Validates the private CloudFront origin proof for exact THN TEST auth routes.
+      Role:
+        Fn::GetAtt:
+          - ThnAuthAdminV2OriginAuthorizerFunctionRole
+          - Arn
+      Environment:
+        Variables:
+          THN_AUTH_V2_ORIGIN_HEADER_SHA256_CURRENT:
+            Ref: ThnAuthAdminV2OriginHeaderSha256Current
+          THN_AUTH_V2_ORIGIN_HEADER_SHA256_PREVIOUS:
+            Ref: ThnAuthAdminV2OriginHeaderSha256Previous
+
+  ThnAuthAdminV2Function:
+    Type: AWS::Serverless::Function
+    Condition: IsThnAuthAdminV2Enabled
+    Metadata:
+      BuildMethod: makefile
+    DependsOn:
+      - ThnAuthAdminV2FunctionLogGroup
+    Properties:
+      CodeUri: .
+      Handler: auth_admin_session_v2.lambda_handler
+      FunctionName: zoolanding-auth-admin-test-ThnAuthAdminV2Function
+      Description: Isolated TEST-only session and MFA boundary for The Hair Narrative Content Hub.
+      Role:
+        Fn::GetAtt:
+          - ThnAuthAdminV2FunctionRole
+          - Arn
+      Environment:
+        Variables:
+          THN_AUTH_V2_DESCRIPTOR_VERSION_ID:
+            Ref: ThnAuthAdminV2DescriptorVersionId
+          THN_AUTH_V2_DESCRIPTOR_SHA256:
+            Ref: ThnAuthAdminV2DescriptorSha256
+          THN_AUTH_V2_AUTH_POLICY_VERSION:
+            Ref: ThnAuthAdminV2AuthPolicyVersion
+          THN_AUTH_V2_AWS_PARTITION:
+            Ref: AWS::Partition
+          THN_AUTH_V2_AWS_ACCOUNT_ID:
+            Ref: AWS::AccountId
+          THN_AUTH_V2_AWS_REGION:
+            Ref: AWS::Region
+          THN_AUTH_V2_COGNITO_REGION:
+            Ref: AWS::Region
+          THN_AUTH_V2_COGNITO_USER_POOL_ID:
+            Ref: ThnAuthAdminV2UserPool
+          THN_AUTH_V2_COGNITO_CLIENT_ID:
+            Ref: ThnAuthAdminV2UserPoolClient
+
+  ThnAuthAdminV2Integration:
+    Type: AWS::ApiGatewayV2::Integration
+    Condition: IsThnAuthAdminV2Enabled
+    Properties:
+      ApiId:
+        Ref: ThnAuthAdminV2Api
+      IntegrationType: AWS_PROXY
+      IntegrationUri:
+        Fn::GetAtt:
+          - ThnAuthAdminV2Function
+          - Arn
+      PayloadFormatVersion: '2.0'
+      TimeoutInMillis: 30000
+
+  ThnAuthAdminV2OriginAuthorizer:
+    Type: AWS::ApiGatewayV2::Authorizer
+    Condition: IsThnAuthAdminV2Enabled
+    Properties:
+      ApiId:
+        Ref: ThnAuthAdminV2Api
+      Name: thn-auth-admin-v2-origin-proof
+      AuthorizerType: REQUEST
+      AuthorizerPayloadFormatVersion: '2.0'
+      EnableSimpleResponses: true
+      AuthorizerResultTtlInSeconds: 0
+      IdentitySource:
+        - $request.header.x-zlp-origin-verify
+      AuthorizerUri:
+        Fn::Sub:
+          - arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${AuthorizerFunctionArn}/invocations
+          - AuthorizerFunctionArn:
+              Fn::GetAtt:
+                - ThnAuthAdminV2OriginAuthorizerFunction
+                - Arn
+
+  ThnAuthAdminV2InvokeOriginAuthorizerPermission:
+    Type: AWS::Lambda::Permission
+    Condition: IsThnAuthAdminV2Enabled
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName:
+        Ref: ThnAuthAdminV2OriginAuthorizerFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn:
+        Fn::Sub: arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${ThnAuthAdminV2Api}/authorizers/${ThnAuthAdminV2OriginAuthorizer}
+
+  ThnAuthAdminV2InvokeSessionSigninPermission:
+    Type: AWS::Lambda::Permission
+    Condition: IsThnAuthAdminV2Enabled
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName:
+        Ref: ThnAuthAdminV2Function
+      Principal: apigateway.amazonaws.com
+      SourceArn:
+        Fn::Sub: arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${ThnAuthAdminV2Api}/test/POST/auth-v2/session/signin
+
+  ThnAuthAdminV2InvokeSessionChallengeRespondPermission:
+    Type: AWS::Lambda::Permission
+    Condition: IsThnAuthAdminV2Enabled
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName:
+        Ref: ThnAuthAdminV2Function
+      Principal: apigateway.amazonaws.com
+      SourceArn:
+        Fn::Sub: arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${ThnAuthAdminV2Api}/test/POST/auth-v2/session/challenge/respond
+
+  ThnAuthAdminV2InvokeSessionMfaSetupPermission:
+    Type: AWS::Lambda::Permission
+    Condition: IsThnAuthAdminV2Enabled
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName:
+        Ref: ThnAuthAdminV2Function
+      Principal: apigateway.amazonaws.com
+      SourceArn:
+        Fn::Sub: arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${ThnAuthAdminV2Api}/test/POST/auth-v2/session/mfa/setup
+
+  ThnAuthAdminV2InvokeSessionMfaVerifyPermission:
+    Type: AWS::Lambda::Permission
+    Condition: IsThnAuthAdminV2Enabled
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName:
+        Ref: ThnAuthAdminV2Function
+      Principal: apigateway.amazonaws.com
+      SourceArn:
+        Fn::Sub: arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${ThnAuthAdminV2Api}/test/POST/auth-v2/session/mfa/verify
+
+  ThnAuthAdminV2InvokeSessionMePermission:
+    Type: AWS::Lambda::Permission
+    Condition: IsThnAuthAdminV2Enabled
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName:
+        Ref: ThnAuthAdminV2Function
+      Principal: apigateway.amazonaws.com
+      SourceArn:
+        Fn::Sub: arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${ThnAuthAdminV2Api}/test/GET/auth-v2/session/me
+
+  ThnAuthAdminV2InvokeSessionLogoutPermission:
+    Type: AWS::Lambda::Permission
+    Condition: IsThnAuthAdminV2Enabled
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName:
+        Ref: ThnAuthAdminV2Function
+      Principal: apigateway.amazonaws.com
+      SourceArn:
+        Fn::Sub: arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${ThnAuthAdminV2Api}/test/POST/auth-v2/session/logout
+
+  ThnAuthAdminV2RouteSessionSignin:
+    Type: AWS::ApiGatewayV2::Route
+    Condition: IsThnAuthAdminV2Enabled
+    Properties:
+      ApiId:
+        Ref: ThnAuthAdminV2Api
+      AuthorizationType: CUSTOM
+      AuthorizerId:
+        Ref: ThnAuthAdminV2OriginAuthorizer
+      RouteKey: 'POST /auth-v2/session/signin'
+      Target:
+        Fn::Join:
+          - /
+          - - integrations
+            - Ref: ThnAuthAdminV2Integration
+
+  ThnAuthAdminV2RouteSessionChallengeRespond:
+    Type: AWS::ApiGatewayV2::Route
+    Condition: IsThnAuthAdminV2Enabled
+    Properties:
+      ApiId:
+        Ref: ThnAuthAdminV2Api
+      AuthorizationType: CUSTOM
+      AuthorizerId:
+        Ref: ThnAuthAdminV2OriginAuthorizer
+      RouteKey: 'POST /auth-v2/session/challenge/respond'
+      Target:
+        Fn::Join:
+          - /
+          - - integrations
+            - Ref: ThnAuthAdminV2Integration
+
+  ThnAuthAdminV2RouteSessionMfaSetup:
+    Type: AWS::ApiGatewayV2::Route
+    Condition: IsThnAuthAdminV2Enabled
+    Properties:
+      ApiId:
+        Ref: ThnAuthAdminV2Api
+      AuthorizationType: CUSTOM
+      AuthorizerId:
+        Ref: ThnAuthAdminV2OriginAuthorizer
+      RouteKey: 'POST /auth-v2/session/mfa/setup'
+      Target:
+        Fn::Join:
+          - /
+          - - integrations
+            - Ref: ThnAuthAdminV2Integration
+
+  ThnAuthAdminV2RouteSessionMfaVerify:
+    Type: AWS::ApiGatewayV2::Route
+    Condition: IsThnAuthAdminV2Enabled
+    Properties:
+      ApiId:
+        Ref: ThnAuthAdminV2Api
+      AuthorizationType: CUSTOM
+      AuthorizerId:
+        Ref: ThnAuthAdminV2OriginAuthorizer
+      RouteKey: 'POST /auth-v2/session/mfa/verify'
+      Target:
+        Fn::Join:
+          - /
+          - - integrations
+            - Ref: ThnAuthAdminV2Integration
+
+  ThnAuthAdminV2RouteSessionMe:
+    Type: AWS::ApiGatewayV2::Route
+    Condition: IsThnAuthAdminV2Enabled
+    Properties:
+      ApiId:
+        Ref: ThnAuthAdminV2Api
+      AuthorizationType: CUSTOM
+      AuthorizerId:
+        Ref: ThnAuthAdminV2OriginAuthorizer
+      RouteKey: 'GET /auth-v2/session/me'
+      Target:
+        Fn::Join:
+          - /
+          - - integrations
+            - Ref: ThnAuthAdminV2Integration
+
+  ThnAuthAdminV2RouteSessionLogout:
+    Type: AWS::ApiGatewayV2::Route
+    Condition: IsThnAuthAdminV2Enabled
+    Properties:
+      ApiId:
+        Ref: ThnAuthAdminV2Api
+      AuthorizationType: CUSTOM
+      AuthorizerId:
+        Ref: ThnAuthAdminV2OriginAuthorizer
+      RouteKey: 'POST /auth-v2/session/logout'
+      Target:
+        Fn::Join:
+          - /
+          - - integrations
+            - Ref: ThnAuthAdminV2Integration
+
+  ThnAuthAdminV2ErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: IsThnAuthAdminV2Enabled
+    Properties:
+      AlarmDescription: THN Auth Admin v2 Lambda invocation errors in TEST.
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value:
+            Ref: ThnAuthAdminV2Function
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      DatapointsToAlarm: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+  ThnAuthAdminV2OwnerOperatorErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: IsThnAuthAdminV2Enabled
+    Properties:
+      AlarmDescription: THN owner operator mediator Lambda invocation errors in TEST.
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value:
+            Ref: ThnAuthAdminV2OwnerOperatorFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      DatapointsToAlarm: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+  ThnAuthAdminV2ThrottlesAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: IsThnAuthAdminV2Enabled
+    Properties:
+      AlarmDescription: THN Auth Admin v2 Lambda throttles in TEST.
+      Namespace: AWS/Lambda
+      MetricName: Throttles
+      Dimensions:
+        - Name: FunctionName
+          Value:
+            Ref: ThnAuthAdminV2Function
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      DatapointsToAlarm: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+  ThnAuthAdminV2Api5xxAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: IsThnAuthAdminV2Enabled
+    Properties:
+      AlarmDescription: THN Auth Admin v2 HTTP API server responses in TEST.
+      Namespace: AWS/ApiGateway
+      MetricName: 5xx
+      Dimensions:
+        - Name: ApiId
+          Value:
+            Ref: ThnAuthAdminV2Api
+        - Name: Stage
+          Value: test
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      DatapointsToAlarm: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
 
 Outputs:
   ApiEndpoint:

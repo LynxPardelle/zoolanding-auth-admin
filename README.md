@@ -46,6 +46,11 @@ The hub owns cross-repository browser contracts. This repository owns the BFF im
 - No JWT, ID token, access token, or refresh token is returned to the browser; raw Cognito challenge sessions are also server-only.
 - Sign-in creates a server-side session and returns only sanitized metadata.
 - Cognito `SOFTWARE_TOKEN_MFA` and `MFA_SETUP` challenges store raw Cognito `Session` values server-side behind a short-lived challenge cookie.
+- The THN v2 `POST /auth-v2/session/mfa/setup` response is the only narrow
+  browser exception for TOTP setup material. It returns the manual setup key
+  only after exact-origin and CSRF checks, lasts five minutes through a
+  single-use enrollment state, uses no-store/no-referrer headers, and never
+  puts setup material in URLs, logs, analytics, screenshots, or durable state.
 - Voluntary TOTP enrollment for an already signed-in user stores the temporary Cognito access token server-side only behind a short-lived enrollment cookie while the setup code is verified.
 - Voluntary TOTP disablement requires an active BFF session, normal CSRF, the current password, and the current authenticator code before Cognito MFA preference is changed.
 - Admin/support MFA reset is separate from self-service disablement. It requires an approved admin session and CSRF, blocks self-reset, disables the target user's Cognito software-token MFA preference, bumps the target session version, and writes an audit event.
@@ -63,6 +68,8 @@ The hub owns cross-repository browser contracts. This repository owns the BFF im
 
 ## Endpoints
 
+Shared v1 surface:
+
 - `POST /auth/session/signin`
 - `POST /auth/session/challenge/respond`
 - `POST /auth/session/mfa/setup`
@@ -79,6 +86,71 @@ The hub owns cross-repository browser contracts. This repository owns the BFF im
 - `POST /auth/admin/users/{subject}/reactivate`
 - `POST /auth/admin/users/{subject}/mfa/reset`
 
+Dormant The Hair Narrative TEST-only v2 surface (disabled by default):
+
+- `POST /auth-v2/session/signin`
+- `POST /auth-v2/session/challenge/respond`
+- `POST /auth-v2/session/mfa/setup`
+- `POST /auth-v2/session/mfa/verify`
+- `GET /auth-v2/session/me`
+- `POST /auth-v2/session/logout`
+
+The v2 surface uses isolated tables, a dedicated retained Cognito pool/client,
+namespaced cookies, an exact service-binding registry row, IAM-authorized
+server-side Cognito authentication, mandatory TOTP, and the exact dedicated
+origin `https://admin-test.thehairnarrative.com`. API Proxy—not this service—owns
+`GET|POST /auth-v2/runtime-config`. No v2 route is active while
+`EnableThnAuthAdminV2=false`. Retained tables, Cognito resources, and fixed-name
+log groups require the separate default-false
+`ProvisionThnAuthAdminV2State=true` TEST-only lifecycle. Once provisioned, they
+stay under stack ownership when routes are disabled; no THN v2 state resource
+exists in the production stack. The ordinary TEST workflow explicitly keeps
+both toggles false and fails closed if it detects active v2 parameters or any
+pre-parameter `ThnAuthAdminV2*` resource. Only a future dedicated workflow may
+own the complete v2 parameter set.
+
+The build-only owner operator is [tools/provision_thn_owner.py](tools/provision_thn_owner.py).
+It accepts only the named TEST operator role whose account matches a reviewed,
+code-owned SHA-256 account anchor, and only in `us-east-1`. The checked-in
+anchor is intentionally inert; activation must replace it with the reviewed
+digest without adding an environment or argv account selector. The CLI is a
+thin synchronous SigV4 client of the exact versioned
+`zoolanding-auth-admin-test-ThnOwnerOperatorV2:test` alias's buffered
+`AWS_IAM` function URL. It discovers that exact URL through
+`GetFunctionUrlConfig`; the human role receives `InvokeFunctionUrl` and the
+post-October-2025 `InvokeFunction` permission only when
+`lambda:InvokedViaFunctionUrl=true`. Identity and resource policies deny direct
+or asynchronous invocation, including from the named operator. The mediator has
+no API route, browser CORS, custom domain, DLQ, or destination and owns the
+Cognito, current-state, and conditional audit permissions. The mediator
+anchors pool, client, and group IDs to the exact
+`zoolanding-auth-admin-test` CloudFormation logical resources, and requires
+the newly formalized `journal-owner` group in that pool. Its closed
+operations are `create`, `enable`, `disable`, `reset`, and
+`repair-session-version`; `accountPurpose=client-owner` is code-owned and
+immutable. Creation starts disabled at session version 1, and enablement is a
+separate versioned operation before first login. A singleton DynamoDB
+reservation and exact Cognito membership prevent a second owner. Every run
+must successfully write a conditional create-only intent before mutation. The
+reviewed tool then attempts a completed or failed terminal event; if a terminal
+write fails, the durable intent remains the reconciliation anchor.
+Reset disables the account, revokes sessions, sets a temporary password,
+deletes the registered TOTP, and requires an explicit later `enable`. The CLI
+prompts for owner email and temporary passwords instead of accepting either in
+argv. Install its pinned SDK with `python -m pip install -r requirements-tools.txt`.
+The isolated Lambda artifacts also install their exact pinned runtime
+requirements: PyJWT for v1/v2 session handlers and boto3 for the owner mediator.
+The CLI and mediator never call or edit
+the shared Cognito user-lifecycle service and never returns provider IDs,
+owner PII, temporary passwords, or TOTP material.
+
+The audit table denies `PutItem` to every principal except the deterministic
+mediator execution role and denies update/delete/batch/PartiQL mutation to all
+principals. The mediator still requires
+`attribute_not_exists(pk/sk)` on every append. This is append-only against the
+human operator; it is not WORM against an authorized deployer able to replace
+the mediator or stack policy.
+
 ## Server-only profile configuration
 
 Deployments pass a base64-encoded JSON profile allowlist through `AuthAdminConfigJsonBase64`. The exact example, field rules, MFA policy, and sensitive setup-material boundary live in [docs/profile-configuration.md](docs/profile-configuration.md). Browser requests cannot choose tenant, environment, group, approval, Cognito, or storage policy.
@@ -89,7 +161,9 @@ Deployments pass a base64-encoded JSON profile allowlist through `AuthAdminConfi
 python -m unittest discover -s tests -p "test_*.py"
 sam validate
 pip-audit -r requirements.txt
+pip-audit -r requirements-tools.txt
 python tools\check_auth_admin_readiness.py --region us-east-1
+python tools\provision_thn_owner.py --help
 ```
 
 The readiness check is read-only by default. It discovers the configured test and production auth-admin stack table outputs, verifies the session, user-state, and audit tables have PITR enabled, and confirms an audit table is present. Use `--enable-pitr` only when the discovered table names are confirmed auth-admin stack tables.
@@ -116,3 +190,28 @@ Required GitHub Environment secret:
 Deploy jobs fail closed before AWS credential setup unless `AWS_ROLE_ARN`, `AUTH_ADMIN_CONFIG_READY=true`, `COGNITO_USER_POOL_ARNS`, and `AUTH_ADMIN_CONFIG_JSON_BASE64` are present in the target GitHub Environment. CI still runs without those values.
 
 Front-door routing should expose these endpoints as same-origin `/auth/session/*` and `/auth/admin/*`. Do not expose wildcard `/auth/*` in a way that steals draft-rendered pages such as `/auth/callback`.
+
+The THN v2 slice is build-only and must not be activated through the ordinary
+workflow yet. Before activation, the reviewed TEST-only workflow must preserve
+the enabled parameter set on every later deployment, verify real stack
+termination protection, deploy the reviewed origin-proof parameter pair, and
+verify the CloudFront-overwritten viewer IP used by the account/IP failure
+windows. V1, v2 session, origin-authorizer, and owner-mediator artifacts now
+have separate source allowlists. The API Proxy v2 runtime route must also be
+complete. These gates keep shared v1 drafts operationally zero-touch.
+
+The former asynchronous-invoke and TOTP-ceremony activation blockers are
+closed in the build-only contract. The owner mediator is reachable only through
+its signed, buffered function URL and still increments the dedicated native
+Lambda `Errors` alarm for sanitized runtime failures. TOTP setup has the narrow
+five-minute, single-use browser exception described above. The default-off
+template and ordinary-deploy guard still prevent either contract from becoming
+active before the dedicated TEST activation workflow and remaining front-door
+gates are complete.
+
+Lambda artifact dependency installation explicitly targets Linux x86_64 /
+Python 3.13 to match `template.yaml`, even when the Makefile runs on Windows.
+Native dependencies must have compatible binary wheels; the build does not
+silently compile them for the host. Source allowlists and runtime behavior are
+unchanged. Build-only CFFI console launchers are omitted, and artifact checks
+reject Windows binaries and compiled host bytecode.
