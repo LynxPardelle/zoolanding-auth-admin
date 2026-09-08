@@ -656,7 +656,7 @@ Resources:
 
   ThnAuthAdminV2OwnerOperatorFunctionRole:
     Type: AWS::IAM::Role
-    Condition: IsThnAuthAdminV2Enabled
+    Condition: IsThnAuthAdminV2StateProvisioned
     Properties:
       RoleName: zoolanding-auth-admin-test-ThnOwnerOperatorV2Role
       AssumeRolePolicyDocument:
@@ -747,7 +747,7 @@ Resources:
 
   ThnAuthAdminV2OwnerOperatorFunction:
     Type: AWS::Serverless::Function
-    Condition: IsThnAuthAdminV2Enabled
+    Condition: IsThnAuthAdminV2StateProvisioned
     Metadata:
       BuildMethod: makefile
     DependsOn:
@@ -831,7 +831,7 @@ Resources:
 
   ThnAuthAdminV2OwnerOperatorAliasPolicy:
     Type: AWS::Lambda::ResourcePolicy
-    Condition: IsThnAuthAdminV2Enabled
+    Condition: IsThnAuthAdminV2StateProvisioned
     DependsOn:
       - ThnAuthAdminV2OwnerOperatorFunctionAliastest
     Properties:
@@ -954,7 +954,7 @@ Resources:
 
   ThnAuthAdminV2FunctionRole:
     Type: AWS::IAM::Role
-    Condition: IsThnAuthAdminV2Enabled
+    Condition: IsThnAuthAdminV2StateProvisioned
     Properties:
       RoleName: zoolanding-auth-admin-test-ThnAuthAdminV2FunctionRole
       AssumeRolePolicyDocument:
@@ -1090,7 +1090,7 @@ Resources:
                     dynamodb:ReturnValues: NONE
   ThnAuthAdminV2OriginAuthorizerFunctionRole:
     Type: AWS::IAM::Role
-    Condition: IsThnAuthAdminV2Enabled
+    Condition: IsThnAuthAdminV2StateProvisioned
     Properties:
       RoleName: zoolanding-auth-test-ThnV2OriginAuthorizerRole
       AssumeRolePolicyDocument:
@@ -1115,7 +1115,7 @@ Resources:
 
   ThnAuthAdminV2OriginAuthorizerFunction:
     Type: AWS::Serverless::Function
-    Condition: IsThnAuthAdminV2Enabled
+    Condition: IsThnAuthAdminV2StateProvisioned
     Metadata:
       BuildMethod: makefile
     DependsOn:
@@ -1138,7 +1138,7 @@ Resources:
 
   ThnAuthAdminV2Function:
     Type: AWS::Serverless::Function
-    Condition: IsThnAuthAdminV2Enabled
+    Condition: IsThnAuthAdminV2StateProvisioned
     Metadata:
       BuildMethod: makefile
     DependsOn:

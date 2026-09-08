@@ -1,0 +1,3 @@
+# Deployment tooling only; not part of the Lambda dependency payload.
+boto3==1.43.84
+PyYAML==6.0.3

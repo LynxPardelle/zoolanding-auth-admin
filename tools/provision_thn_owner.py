@@ -52,10 +52,8 @@ APPROVED_MEDIATOR_QUALIFIER = "test"
 APPROVED_MEDIATOR_ALIAS = (
     f"{APPROVED_MEDIATOR_FUNCTION}:{APPROVED_MEDIATOR_QUALIFIER}"
 )
-# Activation must replace this inert value with the reviewed account-id digest.
-# Keeping the raw account identifier out of the repository preserves the
-# code-owned trust boundary without accepting a caller or environment selector.
-APPROVED_AWS_ACCOUNT_ID_SHA256 = "0" * 64
+# Reviewed TEST account anchor. Never accept an account selector from the caller.
+APPROVED_AWS_ACCOUNT_ID_SHA256 = "3e19eeb25ac142d015c5a4d347dc58784b0a79a124f1353b5e92d90673810a8f"
 
 _ROLE_ARN_RE = re.compile(
     r"^arn:(aws):iam::([0-9]{12}):role/"

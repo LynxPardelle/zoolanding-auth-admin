@@ -172,7 +172,7 @@ The readiness check is read-only by default. It discovers the configured test an
 
 Branches:
 
-- `dev` deploys to GitHub Environment `dev` and SAM config `dev`.
+- `dev` runs CI only; the former cloud development environment is retired.
 - `test` deploys to GitHub Environment `test` and SAM config `test`.
 - `main` deploys to GitHub Environment `production` and SAM config `prod`.
 
@@ -191,8 +191,9 @@ Deploy jobs fail closed before AWS credential setup unless `AWS_ROLE_ARN`, `AUTH
 
 Front-door routing should expose these endpoints as same-origin `/auth/session/*` and `/auth/admin/*`. Do not expose wildcard `/auth/*` in a way that steals draft-rendered pages such as `/auth/callback`.
 
-The THN v2 slice is build-only and must not be activated through the ordinary
-workflow yet. Before activation, the reviewed TEST-only workflow must preserve
+The THN v2 slice must not be activated through the ordinary workflow. Use the
+[dedicated THN TEST release](docs/thn-test-release.md) for explicit provisioning,
+enablement and route-only disablement. Before activation, the workflow must preserve
 the enabled parameter set on every later deployment, verify real stack
 termination protection, deploy the reviewed origin-proof parameter pair, and
 verify the CloudFront-overwritten viewer IP used by the account/IP failure
