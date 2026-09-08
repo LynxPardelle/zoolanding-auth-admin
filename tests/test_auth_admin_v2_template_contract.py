@@ -46,6 +46,13 @@ STATEFUL_V2_RESOURCES = frozenset(
     }
 )
 
+PERSISTENT_RUNTIME_RESOURCES = frozenset({
+    "ThnAuthAdminV2Function", "ThnAuthAdminV2FunctionRole",
+    "ThnAuthAdminV2OriginAuthorizerFunction", "ThnAuthAdminV2OriginAuthorizerFunctionRole",
+    "ThnAuthAdminV2OwnerOperatorFunction", "ThnAuthAdminV2OwnerOperatorFunctionRole",
+    "ThnAuthAdminV2OwnerOperatorAliasPolicy",
+})
+
 EXPECTED_AUTH_ROUTES = {
     ("POST", "/auth-v2/session/signin"),
     ("POST", "/auth-v2/session/challenge/respond"),
@@ -227,7 +234,7 @@ class AuthAdminV2TemplateContractTests(unittest.TestCase):
             with self.subTest(resource=logical_id):
                 condition = (
                     "IsThnAuthAdminV2StateProvisioned"
-                    if logical_id in STATEFUL_V2_RESOURCES
+                    if logical_id in STATEFUL_V2_RESOURCES | PERSISTENT_RUNTIME_RESOURCES
                     else "IsThnAuthAdminV2Enabled"
                 )
                 self.assertIn(f"Condition: {condition}", _resource(template, logical_id))
@@ -549,7 +556,7 @@ class AuthAdminV2TemplateContractTests(unittest.TestCase):
         )
 
         self.assertIn("Type: AWS::Lambda::ResourcePolicy", policy)
-        self.assertIn("Condition: IsThnAuthAdminV2Enabled", policy)
+        self.assertIn("Condition: IsThnAuthAdminV2StateProvisioned", policy)
         self.assertRegex(
             policy,
             r"(?ms)DependsOn:\s*\n\s+- ThnAuthAdminV2OwnerOperatorFunctionAliastest\s*$",
