@@ -41,6 +41,12 @@ def event(method, path, body=None):
 
 
 class AuthAdminV2SecurityEdgeTests(unittest.TestCase):
+    def setUp(self):
+        # The new optional QA lookup must not mask the downstream failure under test.
+        current_client = patch.object(session_v2, "_current_user_client", return_value=flow_tests.FakeV2Store())
+        current_client.start()
+        self.addCleanup(current_client.stop)
+
     @staticmethod
     def _seed_enrollment(store, *, raw_state="enrollment-state", raw_csrf="enrollment-csrf"):
         record = {

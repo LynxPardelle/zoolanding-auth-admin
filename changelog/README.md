@@ -6,6 +6,7 @@ Keep entries chronological, scoped to one change or verification pass, and times
 
 ## Entries
 
+- [2026-09-08 — Isolated QA lifecycle and epoch revocation](2026-09-08-thn-qa-lifecycle.md)
 - [2026-09-07 — Linux Lambda dependencies](2026-09-07-linux-lambda-dependencies.md)
 - [2026-09-04 — TEST delivery and immutable rollback hardening](2026-09-04-test-delivery-hardening.md)
 - [2026-09-04 — THN synchronous owner URL and TOTP ceremony](2026-09-04-thn-owner-url-and-totp-ceremony.md)

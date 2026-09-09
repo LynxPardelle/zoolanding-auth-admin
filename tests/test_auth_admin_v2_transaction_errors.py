@@ -125,7 +125,9 @@ class AuthAdminV2TransactionErrorContractTests(unittest.TestCase):
 
     def _invoke_corrupt_claim(self, store):
         event, record = challenge_fixture()
-        with patch.object(session_v2, "_now_epoch", return_value=NOW + 1):
+        with patch.object(session_v2, "_now_epoch", return_value=NOW + 1), patch.object(
+            session_v2, '_current_user_client', return_value=flow_tests.FakeV2Store()
+        ):
             return session_v2._claim_ephemeral(
                 event,
                 store,

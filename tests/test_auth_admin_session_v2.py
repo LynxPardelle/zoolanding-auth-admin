@@ -1053,7 +1053,8 @@ class AuthAdminSessionV2Tests(unittest.TestCase):
         enrollment = store.ephemeral[hash_text("enrollment-token")]
         self.assertEqual(enrollment["consumedAt"], NOW)
         self.assertIn(hash_text("mfa-session-token"), store.sessions)
-        current_reads = [call[1] for call in store.calls if call[0] == "current_user_get"]
+        current_reads = [call[1] for call in store.calls if call[0] == "current_user_get"
+                         and current_user.unmarshal_item(call[1]['Key'])['sk'].startswith('SUBJECT#')]
         self.assertEqual(len(current_reads), 1)
         self.assertIs(current_reads[0]["ConsistentRead"], True)
         cookies = response_cookies(response)

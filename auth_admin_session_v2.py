@@ -27,6 +27,7 @@ from auth_admin_current_user_v2 import (
     CurrentUserStateUnavailable,
     assert_session_current,
 )
+import auth_admin_qa_state_v2 as qa_state
 
 
 ENVIRONMENT = "test"
@@ -183,6 +184,7 @@ def _signin_response(event: dict[str, Any]) -> dict[str, Any]:
         ip_limit=SIGNIN_IP_FAILURE_LIMIT,
     )
     try:
+        qa_fence = _qa_epoch_for_record({'username': email, 'accountHash': account_hash}, initial=True)
         response = _cognito_client().admin_initiate_auth(
             UserPoolId=_cognito_user_pool_id(),
             ClientId=_cognito_client_id(),
@@ -196,8 +198,10 @@ def _signin_response(event: dict[str, Any]) -> dict[str, Any]:
             fallback_username=email,
             allow_session=False,
         )
+        if result['kind'] == 'challenge' and qa_fence is not None:
+            result['record']['qaFence'] = qa_fence
         final_response = (
-            _new_challenge_response(result["record"])
+            _new_challenge_response(result["record"], qa_checked=True)
             if result["kind"] == "challenge"
             else _new_session_response(result["authResult"], account_hash=account_hash)
         )
@@ -285,6 +289,10 @@ def _commit_successor(
     source_state_hash: Optional[str] = None,
     source_record: Optional[Mapping[str, Any]] = None,
 ) -> None:
+    if 'qaFence' in next_item:
+        _require_qa_epoch(next_item)
+        if source_record is not None and source_record.get('qaFence') != next_item['qaFence']:
+            raise AuthV2AuthFailed()
     if source_state_hash is None and source_record is None:
         if next_item.get("recordType") == "authSessionV2":
             store.put_session(next_item)
@@ -322,6 +330,7 @@ def _new_challenge_response(
     store: Any = None,
     source_state_hash: Optional[str] = None,
     source_record: Optional[Mapping[str, Any]] = None,
+    qa_checked: bool = False,
 ) -> dict[str, Any]:
     state_value = _random_urlsafe(32)
     csrf_value = _random_urlsafe(32)
@@ -339,6 +348,10 @@ def _new_challenge_response(
         "expiresAt": now + STATE_SECONDS,
         "claimedAt": None,
     }
+    qa_fence = (_require_qa_epoch(source_record) if source_record is not None
+                else _qa_epoch_for_record(record_fields, initial=not qa_checked))
+    if qa_fence is not None:
+        record['qaFence'] = qa_fence
     record["stateBindingHash"] = _ephemeral_state_binding_hash(record)
     _commit_successor(
         store or _session_store(),
@@ -405,6 +418,7 @@ def _challenge_response(event: dict[str, Any]) -> dict[str, Any]:
             challenge_responses["NEW_PASSWORD"] = _password(payload.get("newPassword"))
         else:
             raise AuthV2AuthFailed()
+        _require_qa_epoch(record)
         response = _cognito_client().admin_respond_to_auth_challenge(
             UserPoolId=_cognito_user_pool_id(),
             ClientId=_cognito_client_id(),
@@ -484,6 +498,7 @@ def _mfa_setup_response(event: dict[str, Any]) -> dict[str, Any]:
             account_limit=CHALLENGE_ACCOUNT_FAILURE_LIMIT,
             ip_limit=CHALLENGE_IP_FAILURE_LIMIT,
         )
+        _require_qa_epoch(record)
         provider = _cognito_client().associate_software_token(
             Session=str(record["cognitoSession"])
         )
@@ -522,6 +537,9 @@ def _mfa_setup_response(event: dict[str, Any]) -> dict[str, Any]:
         "expiresAt": now + STATE_SECONDS,
         "claimedAt": None,
     }
+    qa_fence = _require_qa_epoch(record)
+    if qa_fence is not None:
+        enrollment['qaFence'] = qa_fence
     enrollment["stateBindingHash"] = _ephemeral_state_binding_hash(enrollment)
     try:
         _commit_successor(
@@ -578,6 +596,7 @@ def _mfa_verify_response(event: dict[str, Any]) -> dict[str, Any]:
             account_limit=CHALLENGE_ACCOUNT_FAILURE_LIMIT,
             ip_limit=CHALLENGE_IP_FAILURE_LIMIT,
         )
+        _require_qa_epoch(record)
         verified = _cognito_client().verify_software_token(
             Session=str(record["cognitoSession"]),
             UserCode=_totp(payload.get("code")),
@@ -590,6 +609,7 @@ def _mfa_verify_response(event: dict[str, Any]) -> dict[str, Any]:
         )
         if not provider_session:
             raise AuthV2Unavailable()
+        _require_qa_epoch(record)
         response = _cognito_client().admin_respond_to_auth_challenge(
             UserPoolId=_cognito_user_pool_id(),
             ClientId=_cognito_client_id(),
@@ -684,6 +704,15 @@ def _new_session_response(
     except Exception as exc:
         raise AuthV2Unavailable() from exc
 
+    qa_fence = _require_qa_epoch(source_record) if source_record is not None else None
+    if state['accountPurpose'] == 'qa':
+        if (qa_fence is None or qa_fence['subject'] != subject
+                or qa_fence['sessionVersion'] != state['sessionVersion']
+                or qa_fence['accountHash'] != account_hash):
+            raise AuthV2AuthFailed()
+    elif qa_fence is not None:
+        raise AuthV2AuthFailed()
+
     session_value = _random_urlsafe(32)
     csrf_value = _random_urlsafe(32)
     now = _now_epoch()
@@ -716,6 +745,8 @@ def _new_session_response(
     }
     if cognito_username:
         record["cognitoUsername"] = cognito_username
+    if qa_fence is not None:
+        record['qaFence'] = qa_fence
     _require_current_owner_membership(record)
     try:
         _commit_successor(
@@ -768,6 +799,56 @@ def _state_for_subject(subject: str) -> dict[str, Any]:
     return load_current_user_state(
         _current_user_client(), scope=APPROVED_SCOPE, subject=subject
     )
+
+
+def _qa_epoch_for_record(record: Mapping[str, Any], *, initial: bool) -> Optional[dict[str, Any]]:
+    """Resolve QA from its exact reservation AND Cognito subject, never username alone.
+
+    Unfenced historical QA challenges fail closed. Non-QA records keep their
+    existing shape; aliases resolving to QA cannot fall back to that path.
+    """
+    try:
+        if 'qaFence' in record:
+            fence = qa_state.assert_fence_current(_current_user_client(), record['qaFence'])
+            if fence['accountHash'] != record.get('accountHash'):
+                raise AuthV2AuthFailed()
+            return fence
+        reservation = qa_state.load_reservation(_current_user_client(), optional=True)
+        if reservation is None:
+            return None
+        username = record.get('username')
+        if not isinstance(username, str) or not username:
+            raise AuthV2AuthFailed()
+        try:
+            provider = _cognito_client().admin_get_user(UserPoolId=_cognito_user_pool_id(), Username=username)
+        except Exception as exc:
+            if _provider_unavailable(exc):
+                raise AuthV2Unavailable() from None
+            raise AuthV2AuthFailed() from None
+        attributes = provider.get('UserAttributes') if isinstance(provider, Mapping) else None
+        subjects = [item.get('Value') for item in attributes if isinstance(item, Mapping) and item.get('Name') == 'sub'] if isinstance(attributes, list) else []
+        if len(subjects) != 1 or not isinstance(subjects[0], str) or not subjects[0]:
+            raise AuthV2AuthFailed()
+        if subjects[0] != reservation['subject']:
+            if record.get('accountHash') == reservation['accountHash']:
+                raise AuthV2AuthFailed()
+            return None
+        if not initial or record.get('accountHash') != reservation['accountHash'] or provider.get('Enabled') is not True:
+            raise AuthV2AuthFailed()
+        state = _state_for_subject(reservation['subject'])
+        fence = {'subject': reservation['subject'], 'accountPurpose': 'qa',
+                 'accountHash': reservation['accountHash'], 'sessionVersion': state['sessionVersion']}
+        return qa_state.assert_fence_current(_current_user_client(), fence)
+    except CurrentUserStateUnavailable:
+        raise AuthV2AuthFailed() from None
+    except AuthV2AuthFailed:
+        raise
+    except Exception:
+        raise AuthV2Unavailable() from None
+
+
+def _require_qa_epoch(record: Mapping[str, Any]) -> Optional[dict[str, Any]]:
+    return _qa_epoch_for_record(record, initial=False)
 
 
 def _put_ephemeral(store: Any, record: Mapping[str, Any]) -> None:
@@ -1055,6 +1136,7 @@ def _claim_ephemeral(
         cookie_name=csrf_cookie_name,
         expected_hash=str(record.get("csrfHash") or ""),
     )
+    _require_qa_epoch(record)
     claimed = store.claim_ephemeral(
         state_hash,
         expected_type=expected_type,
@@ -1091,6 +1173,7 @@ def _claim_ephemeral(
         raise AuthV2Unavailable()
     if expected_challenge and claimed.get("challengeName") != expected_challenge:
         raise AuthV2AuthFailed()
+    _require_qa_epoch(claimed)
     return state_hash, dict(claimed)
 
 
@@ -1575,6 +1658,14 @@ def _ephemeral_state_binding_hash(record: Mapping[str, Any]) -> str:
     ]
     if record_type == "authChallengeV2":
         required.append("challengeName")
+    if 'qaFence' in record:
+        try:
+            fence = qa_state.validate_fence(record['qaFence'])
+            if fence['accountHash'] != record.get('accountHash'):
+                raise AuthV2Unavailable()
+        except CurrentUserStateUnavailable:
+            raise AuthV2Unavailable() from None
+        required.append('qaFence')
     if (
         record.get("scope") != _SCOPE
         or not all(_hex_hash(record.get(key)) for key in ("stateIdHash", "csrfHash", "accountHash"))
@@ -2090,6 +2181,16 @@ class DynamoAuthV2Store:
             or item.get("consumedAt") is not None
         ):
             raise AuthV2Unavailable()
+        if 'qaFence' in item:
+            try:
+                self.client.transact_write_items(TransactItems=[{'Put': {
+                    'TableName': CHALLENGE_TABLE_NAME, 'Item': self._serialize_item(item),
+                    'ConditionExpression': 'attribute_not_exists(#stateIdHash)',
+                    'ExpressionAttributeNames': {'#stateIdHash': 'stateIdHash'},
+                }}, *qa_state.transaction_checks(item['qaFence'], self._serialize_item)])
+                return
+            except Exception:
+                raise AuthV2Unavailable() from None
         try:
             self.client.put_item(
                 TableName=CHALLENGE_TABLE_NAME,
@@ -2399,7 +2500,7 @@ class DynamoAuthV2Store:
                 }
             },
         ]
-        if next_type == "authSessionV2":
+        if next_type == "authSessionV2" and 'qaFence' not in next_item:
             transaction.append(
                 {
                     "ConditionCheck": {
@@ -2438,6 +2539,8 @@ class DynamoAuthV2Store:
                     }
                 }
             )
+        if 'qaFence' in next_item:
+            transaction.extend(qa_state.transaction_checks(next_item['qaFence'], self._serialize_item))
         intent = {
             "stateIdHash": state_id_hash,
             "expectedType": expected_type,

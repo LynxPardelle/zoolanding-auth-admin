@@ -7,6 +7,7 @@ import json
 from typing import Any
 
 from tools import provision_thn_owner as owner
+import auth_admin_qa_operator_v2 as qa
 
 
 DynamoAuditEventSink = owner.DynamoAuditEventSink
@@ -43,13 +44,14 @@ def _validated_request(event: Any) -> dict[str, Any]:
         raise owner.OperatorInputError("owner input is invalid")
     operation = event.get("operation")
     expected = {"contractVersion", "operation", "username"}
-    if operation in {"create", "reset"}:
+    if isinstance(operation, str) and operation in {"create", "reset", "qa-create", "qa-reset"}:
         expected.add("temporaryPassword")
     if (
         set(event) != expected
         or type(event.get("contractVersion")) is not int
         or event.get("contractVersion") != 1
-        or operation not in _OPERATIONS
+        or not isinstance(operation, str)
+        or operation not in _OPERATIONS | qa.OPERATIONS
     ):
         raise owner.OperatorInputError("owner input is invalid")
     request = {
@@ -57,7 +59,7 @@ def _validated_request(event: Any) -> dict[str, Any]:
         "username": owner._validate_username(event.get("username")),
         "temporary_password": None,
     }
-    if operation in {"create", "reset"}:
+    if operation in {"create", "reset", "qa-create", "qa-reset"}:
         request["temporary_password"] = owner._validate_temporary_password(
             event.get("temporaryPassword")
         )
@@ -138,6 +140,9 @@ def lambda_handler(event: Any, context: Any) -> dict[str, Any]:
     try:
         session = _new_session()
         dynamodb = session.client("dynamodb")
+        if request['operation'] in qa.OPERATIONS:
+            result = qa.execute_operation(session, dynamodb=dynamodb, **request)
+            return _http_response(200, qa.public_result(result, request['operation']))
         result = execute_operation(
             session,
             state_client=DynamoCurrentUserStateClient(dynamodb),

@@ -25,6 +25,7 @@ class LambdaArtifactBuildContractTests(unittest.TestCase):
         expected = {
             "AuthAdminFunction": {"lambda_function.py"},
             "ThnAuthAdminV2Function": {
+                "auth_admin_qa_state_v2.py",
                 "auth_admin_current_user_v2.py",
                 "auth_admin_session_v2.py",
                 "service_binding_registry_consumer_v2.py",
@@ -33,9 +34,12 @@ class LambdaArtifactBuildContractTests(unittest.TestCase):
                 "auth_admin_origin_authorizer_v2.py",
             },
             "ThnAuthAdminV2OwnerOperatorFunction": {
+                "auth_admin_qa_state_v2.py",
+                "auth_admin_qa_operator_v2.py",
                 "auth_admin_current_user_v2.py",
                 "auth_admin_owner_operator_v2.py",
                 "tools/provision_thn_owner.py",
+                "tools/provision_thn_qa.py",
             },
         }
 

@@ -110,10 +110,9 @@ pre-parameter `ThnAuthAdminV2*` resource. Only a future dedicated workflow may
 own the complete v2 parameter set.
 
 The build-only owner operator is [tools/provision_thn_owner.py](tools/provision_thn_owner.py).
-It accepts only the named TEST operator role whose account matches a reviewed,
-code-owned SHA-256 account anchor, and only in `us-east-1`. The checked-in
-anchor is intentionally inert; activation must replace it with the reviewed
-digest without adding an environment or argv account selector. The CLI is a
+It accepts only the named TEST operator role whose account matches the reviewed,
+code-owned SHA-256 account anchor, and only in `us-east-1`. The anchor is never
+an environment or argv account selector. The CLI is a
 thin synchronous SigV4 client of the exact versioned
 `zoolanding-auth-admin-test-ThnOwnerOperatorV2:test` alias's buffered
 `AWS_IAM` function URL. It discovers that exact URL through
@@ -151,6 +150,51 @@ principals. The mediator still requires
 human operator; it is not WORM against an authorized deployer able to replace
 the mediator or stack policy.
 
+### Isolated TEST QA rehearsal
+
+[tools/provision_thn_qa.py](tools/provision_thn_qa.py) is a separate signed client
+of that same IAM-only buffered alias. The existing mediator (reserved concurrency
+one) dispatches four closed operations with server-fixed `accountPurpose=qa`;
+neither client nor browser can choose a subject, scope, purpose, pool or group.
+The owner CLI, fixed `client-owner` purpose and transactional owner singleton
+remain unchanged. QA has its own transactional reservation, immutable purpose
+and exact provider-subject binding. A durable owner binding denies QA creation,
+enablement and reset, including malformed owner-binding records.
+
+| QA operation | Authority after success | Meaning |
+| --- | --- | --- |
+| `qa-create` | Disabled, version 1 | Reserve the sole QA identity before owner onboarding; join only the exact QA rehearsal group |
+| `qa-enable` | Enabled, new version | Allowed only before owner binding, with completed reset and no terminal retirement |
+| `qa-reset` | Disabled, new version | Revoke old sessions/challenges first; reset password and remove TOTP for another human enrollment |
+| `qa-disable` | Disabled, terminal retirement | Revoke first, disable provider sign-in, globally sign out and remove only QA membership; repeat to finish cleanup |
+
+Reset is not retirement: a partial reset keeps a pending marker and cannot be
+enabled until an explicit reset retry completes. Terminal disable can never be
+undone with create, reset or enable. Both operations revoke the exact reserved
+subject's state/version before provider discovery or identity reads, so provider
+failure cannot leave old BFF authority active. Provider cleanup failures still
+report failure and require retry; success is not inferred from a sleep or timeout.
+An ambiguous enable or missing completion audit quarantines QA as retired.
+
+QA challenges, TOTP enrollment and session finalization carry a server-only
+reservation/subject/purpose/version fence captured before authentication. Each
+continuation rechecks current authority. Atomic successor writes also check the
+exact QA state, reservation and absence of an owner binding, closing reset,
+reenablement and finalization races. Aliases cannot enter the unfenced owner
+path; historical QA challenges without a fence cannot finalize a session.
+The browser sees no fence, reservation, provider identifier or new capability.
+
+The client prompts for email and temporary password without echoing them. Never
+put these values, cookies or TOTP material in command arguments or evidence.
+Final rehearsal closure requires successful terminal `qa-disable`, rejected old
+session/challenge access and QA membership absent before owner onboarding.
+Retain the QA account, state, content and append-only audit: this procedure does
+not delete data or add cleanup permissions. It declares no new infrastructure
+resource or service, and does not change existing IAM policies, pool, routes,
+domain, function, human role or the shared Cognito user-lifecycle service.
+Publishing code may create new immutable versions of the existing functions;
+keep reviewed rollback versions. Local tests do not prove live cleanup or MFA.
+
 ## Server-only profile configuration
 
 Deployments pass a base64-encoded JSON profile allowlist through `AuthAdminConfigJsonBase64`. The exact example, field rules, MFA policy, and sensitive setup-material boundary live in [docs/profile-configuration.md](docs/profile-configuration.md). Browser requests cannot choose tenant, environment, group, approval, Cognito, or storage policy.
@@ -164,6 +208,7 @@ pip-audit -r requirements.txt
 pip-audit -r requirements-tools.txt
 python tools\check_auth_admin_readiness.py --region us-east-1
 python tools\provision_thn_owner.py --help
+python tools\provision_thn_qa.py --help
 ```
 
 The readiness check is read-only by default. It discovers the configured test and production auth-admin stack table outputs, verifies the session, user-state, and audit tables have PITR enabled, and confirms an audit table is present. Use `--enable-pitr` only when the discovered table names are confirmed auth-admin stack tables.
@@ -214,5 +259,10 @@ Lambda artifact dependency installation explicitly targets Linux x86_64 /
 Python 3.13 to match `template.yaml`, even when the Makefile runs on Windows.
 Native dependencies must have compatible binary wheels; the build does not
 silently compile them for the host. Source allowlists and runtime behavior are
-unchanged. Build-only CFFI console launchers are omitted, and artifact checks
+explicit. QA dispatch and both operator clients belong only to the existing
+owner-mediator artifact; the read-only QA fence module additionally belongs to
+the existing v2 session artifact. V1 and origin-authorizer payloads admit no QA
+source. Existing CI discovers the QA tests and builds these same four target
+allowlists; no new job, permission, deployment environment or artifact target is
+introduced. Build-only CFFI console launchers are omitted, and artifact checks
 reject Windows binaries and compiled host bytecode.
