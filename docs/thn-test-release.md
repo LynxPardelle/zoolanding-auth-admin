@@ -77,3 +77,35 @@ Run the full unit suite, the four artifact allowlist checks, `cfn-lint` against
 for `requirements.txt`, `requirements-tools.txt` and `requirements-release.txt`.
 Live sign-in, MFA, origin isolation and owner acceptance remain rollout gates;
 unit tests do not constitute their completion.
+
+## QA rehearsal and terminal closure
+
+The existing four-target artifact build includes the server-fixed QA dispatcher
+and [QA operator client](../tools/provision_thn_qa.py) only in the owner-mediator
+payload, and the read-only epoch contract in the v2 session payload. Source
+allowlist checks reject QA operator code in v1, v2 session or origin-authorizer
+artifacts. Current CI uses test discovery and those exact allowlists; workflows,
+permissions, environments and infrastructure declarations are unchanged by QA.
+
+QA provisioning is not a deployment-workflow operation. Use only the same
+reviewed human IAM role and buffered versioned mediator alias, before owner
+onboarding, with `qa-create`, `qa-enable`, `qa-reset` or `qa-disable`. The client
+prompts for private values and accepts no purpose/scope/subject selector. The
+owner CLI and its sole `client-owner` reservation remain unchanged.
+
+Complete recovery/reset and fresh human MFA rehearsal before terminal removal.
+`qa-reset` revokes the current epoch first and stays disabled; provider failure
+leaves reset pending, so only another reset can complete it before enablement.
+`qa-disable` first retires the exact reserved identity and revokes its epoch,
+then disables provider access, globally signs out and removes only that QA
+identity's group membership. Retry terminal disable until provider cleanup is
+confirmed; it never reactivates QA or deletes its account, state, content or
+audit. Old cookies and challenges must be rejected. A retired QA reservation
+or an existing owner reservation permanently denies QA create/enable/reset.
+
+No extra AWS service, resource declaration, permission, route, domain, pool or
+function is introduced for the rehearsal or its cleanup. Immutable versions of
+the existing Lambda artifacts are normal release lifecycle objects, not a new
+service; preserve the reviewed rollback versions. Do not claim final live QA
+cleanup from local tests: it requires the approved account and human ceremony,
+followed by terminal-disable evidence without private values.

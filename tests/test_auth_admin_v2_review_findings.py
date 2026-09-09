@@ -76,6 +76,7 @@ class AuthAdminV2ReviewFindingTests(unittest.TestCase):
     def _run_signin(self, provider_response):
         store = ReservingFlowStore()
         with (
+            patch.object(session_v2, "_current_user_client", return_value=store),
             patch.object(
                 session_v2, "_require_active_service_binding", return_value={}
             ),
@@ -153,6 +154,7 @@ class AuthAdminV2ReviewFindingTests(unittest.TestCase):
                 return_value=("us-east-1", "us-east-1_THNTEST", "thnv2client"),
             ),
             patch.object(session_v2, "_session_store", return_value=store),
+            patch.object(session_v2, "_current_user_client", return_value=store),
             patch.object(session_v2, "_cognito_client", return_value=cognito),
             patch.object(session_v2, "_now_epoch", return_value=NOW),
             patch.dict(
@@ -310,6 +312,7 @@ class AuthAdminV2ReviewFindingTests(unittest.TestCase):
                 return_value=("us-east-1", "us-east-1_THNTEST", "thnv2client"),
             ),
             patch.object(session_v2, "_session_store", return_value=store),
+            patch.object(session_v2, "_current_user_client", return_value=store),
             patch.object(session_v2, "_cognito_client", return_value=cognito),
             patch.object(session_v2, "_now_epoch", return_value=NOW),
             patch.object(
