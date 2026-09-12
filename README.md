@@ -218,7 +218,8 @@ The readiness check is read-only by default. It discovers the configured test an
 Branches:
 
 - `dev` runs CI only; the former cloud development environment is retired.
-- `test` deploys to GitHub Environment `test` and SAM config `test`.
+- `test` normally deploys to GitHub Environment `test` and SAM config `test`;
+  an explicitly selected exact THN source promotion runs validation only.
 - `main` deploys to GitHub Environment `production` and SAM config `prod`.
 
 Required GitHub Environment variables:
@@ -233,6 +234,26 @@ Required GitHub Environment secret:
 - `AUTH_ADMIN_CONFIG_JSON_BASE64`
 
 Deploy jobs fail closed before AWS credential setup unless `AWS_ROLE_ARN`, `AUTH_ADMIN_CONFIG_READY=true`, `COGNITO_USER_POOL_ARNS`, and `AUTH_ADMIN_CONFIG_JSON_BASE64` are present in the target GitHub Environment. CI still runs without those values.
+
+Optional **repository Actions variable** `AUTH_TEST_PROMOTION_SELECTION_JSON`
+selects one reviewed THN source promotion; it is not an Environment variable or
+an AWS/private configuration descriptor. Its closed JSON has only
+`schemaVersion: 1`, `mode: "thn-source-only"`, `devSha`, and `devTree`, with exact
+40-character lowercase Git identities. The existing non-forced, two-parent,
+current-`dev`, whole-tree promotion guard still runs first. Absent/empty selection
+keeps the existing legacy deployment path. Any defined malformed, unknown or
+stale selection blocks before a GitHub Environment or AWS credentials; it never
+falls back to legacy. Only the classifier's exact `legacy` output admits the
+privileged job.
+
+A matching selection builds the four payloads and independently verifies a
+run/attempt/source-bound **NONDEPLOYABLE** artifact in two credential-free jobs.
+It does not package, deploy, load private parameters or enable THN. Existing
+legacy deploy/rollback consumers reject its distinct schema. The selector is
+never cleared automatically: a later source deliberately blocks until a trusted
+operator reviews replacement or removal (removal restores legacy deployment).
+See [exact-source selection](docs/thn-test-release.md#exact-source-test-promotion)
+for the required release sequence and artifact boundary.
 
 Front-door routing should expose these endpoints as same-origin `/auth/session/*` and `/auth/admin/*`. Do not expose wildcard `/auth/*` in a way that steals draft-rendered pages such as `/auth/callback`.
 

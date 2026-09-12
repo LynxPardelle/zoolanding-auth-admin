@@ -6,8 +6,9 @@ registry. Those remain separate, reviewed rollout steps.
 
 ## Preconditions
 
-- Merge the reviewed feature into `dev`, then promote `dev` to `test` with a merge
-  commit. Never modify `main` or the production workflow for this release.
+- Merge the reviewed feature into `dev`, configure the exact-source selection
+  below, then promote that reviewed `dev` to `test` with a merge commit. Never
+  modify `main` or the production workflow for this release.
 - The existing Auth Admin TEST stack must be stable and have actual termination
   protection enabled. The workflow does not create an alternate stack or change
   this protection itself.
@@ -20,6 +21,70 @@ registry. Those remain separate, reviewed rollout steps.
   environment `test`, and exactly the eight THN parameters validated by
   `tools/prepare_thn_test_parameters.py`. Do not put its values in source, logs,
   issue comments, or release artifacts.
+
+## Exact-source TEST promotion
+
+Ordinary Auth TEST deployment rebuilds shared v1 and supplies its deployment
+parameters. It is not the private lifecycle's v1-preserving composer. To promote
+THN source without that ordinary deployment, a trusted repository release
+operator must explicitly set **repository Actions variable**
+`AUTH_TEST_PROMOTION_SELECTION_JSON` after the reviewed source reaches `dev`.
+Do not use the `test` Environment variable namespace: selection must happen
+before an Environment is selected.
+
+The closed JSON object has exactly four fields:
+
+| Field | Required value |
+| --- | --- |
+| `schemaVersion` | Integer `1`, not a boolean |
+| `mode` | `thn-source-only` |
+| `devSha` | Exact reviewed current `dev` commit, 40 lowercase hexadecimal characters |
+| `devTree` | That commit's exact whole tree, 40 lowercase hexadecimal characters |
+
+The selector is non-secret release intent, not authorization to deploy. It must
+contain no private configuration or resource identifiers. Labels, branch names,
+partial hashes and caller-provided mode overrides are not selectors. Read back
+the exact variable and independently verify both Git identities before the
+normal `dev` to `test` merge. No forced update, squash or rebase promotion is
+allowed: the existing guard requires exactly two parents, the event's previous
+TEST commit first, fetched current `dev` second, and a whole tree equal to `dev`.
+
+`tools/classify_test_promotion.py` reads the repository variable once in the
+credential-free `validate` job, after that guard and before build. Absent or
+empty text means `legacy`; whitespace is defined invalid text. JSON duplicates,
+unknown fields/modes, wrong types, malformed JSON, input over 4,096 UTF-8 bytes,
+and stale/mismatched identities fail closed with fixed diagnostics. A failed,
+empty or unknown classifier output cannot start privileged work. Later jobs
+consume only the validated mode output, never the mutable variable again.
+
+- `legacy`: unchanged release artifact, Environment `test`, parameter setup,
+  ordinary v2 guard and reviewed change-set workflow.
+- `thn-source-only`: `validate` builds and uploads only the validation artifact;
+  `verify-thn-validation` downloads its immutable artifact ID and verifies it
+  using tools checked out at the exact run source. Neither job selects an
+  Environment, requests OIDC, reads secrets, configures AWS credentials,
+  packages a SAM deployment, executes a change set or enables THN.
+
+The validation artifact name contains `test-validation`. Transport has exactly
+`build/` and `validation-manifest.json`. The build contains four allowlisted
+Lambda directories, `template.yaml` and `validation-metadata.json`, but no
+release tools or legacy metadata. Schema `zoolanding-test-validation/v1` declares
+`purpose: validation-only`, `deployable: false` and the selected mode, exact
+source/dev/tree/run/attempt. Its complete per-file inventory and manifest SHA-256
+are checked against the build job's digest; project source bytes must also match
+the trusted source checkout. Unexpected files, links, foreign host binaries,
+replayed attempts and provenance drift are rejected. The verifier needs only
+the Python standard library and never executes code from the artifact. This is
+**NONDEPLOYABLE** evidence: strict legacy deploy/rollback consumers reject its
+schema (and missing release manifest) before AWS credential configuration.
+
+The variable is never automatically cleared. A later `dev` source deliberately
+blocks until an operator reviews a replacement exact selection or its removal.
+Removal restores ordinary shared-v1 deployment; it is a separate release
+decision, not cleanup. This opt-in mode does not change other drafts' default
+legacy flow, production, private lifecycle behavior, IAM or runtime packages.
+Successful source validation does not prove private activation or live QA.
+Dispatch the dedicated lifecycle only after its separate approved gates pass.
 
 ## Operations
 
@@ -55,7 +120,7 @@ concurrency group.
 The release composer keeps every non-THN resource and configuration parameter
 from the live stack. Shared parameters use CloudFormation `UsePreviousValue`,
 including the shared authentication configuration; the workflow never loads or
-re-emits its secret. Shared globals must remain compatible. The change-set
+  re-emits its secret. Shared globals must remain compatible. The change-set
 review refuses any non-THN resource change, unknown resource type, state
 deletion, function/role deletion or replacement. A previous Lambda version can
 leave stack management only with the explicit `Retain` policy.
