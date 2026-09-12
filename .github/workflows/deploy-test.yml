@@ -21,13 +21,19 @@ jobs:
       AWS_REGION: us-east-1
       SAM_CLI_TELEMETRY: 0
     outputs:
+      promotion_mode: ${{ steps.promotion.outputs.mode }}
+      dev_sha: ${{ steps.promotion.outputs.dev_sha }}
+      dev_tree: ${{ steps.promotion.outputs.dev_tree }}
       artifact_id: ${{ steps.upload.outputs.artifact-id }}
       artifact_name: ${{ steps.identity.outputs.name }}
       manifest_digest: ${{ steps.manifest.outputs.digest }}
+      validation_artifact_id: ${{ steps.validation-upload.outputs.artifact-id }}
+      validation_manifest_digest: ${{ steps.validation-artifact.outputs.digest }}
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.13'
@@ -56,6 +62,22 @@ jobs:
           test "$first_parent" = "$BEFORE_SHA"
           test "$second_parent" = "$(git rev-parse refs/remotes/origin/dev)"
           test "$(git rev-parse 'HEAD^{tree}')" = "$(git rev-parse 'refs/remotes/origin/dev^{tree}')"
+      - name: Classify exact reviewed TEST promotion
+        id: promotion
+        shell: bash
+        env:
+          AUTH_TEST_PROMOTION_SELECTION_JSON: ${{ vars.AUTH_TEST_PROMOTION_SELECTION_JSON }}
+        run: |
+          set -euo pipefail
+          PROMOTED_DEV_SHA="$(git rev-parse refs/remotes/origin/dev)"
+          PROMOTED_DEV_TREE="$(git rev-parse 'refs/remotes/origin/dev^{tree}')"
+          export PROMOTED_DEV_SHA PROMOTED_DEV_TREE
+          mode="$(python tools/classify_test_promotion.py)"
+          case "$mode" in
+            legacy|thn-source-only) ;;
+            *) echo "promotion_mode_invalid"; exit 1 ;;
+          esac
+          printf 'mode=%s\ndev_sha=%s\ndev_tree=%s\n' "$mode" "$PROMOTED_DEV_SHA" "$PROMOTED_DEV_TREE" >> "$GITHUB_OUTPUT"
       - name: Test, validate, and build exact source
         shell: bash
         run: |
@@ -69,6 +91,7 @@ jobs:
           sam build --no-cached
           python tools/check_lambda_artifacts.py
       - name: Assemble immutable release artifact
+        if: steps.promotion.outputs.mode == 'legacy'
         shell: bash
         env:
           RELEASE_SHA: ${{ github.sha }}
@@ -99,6 +122,7 @@ jobs:
           PY
           (cd .aws-sam/build && LC_ALL=C find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum) > .aws-sam/build-manifest.sha256
       - name: Compute release identity
+        if: steps.promotion.outputs.mode == 'legacy'
         id: manifest
         shell: bash
         run: |
@@ -107,12 +131,14 @@ jobs:
           [[ "$digest" =~ ^[a-f0-9]{64}$ ]] || { echo "manifest_digest_invalid"; exit 1; }
           printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
       - name: Define artifact name
+        if: steps.promotion.outputs.mode == 'legacy'
         id: identity
         shell: bash
         env:
           ARTIFACT_NAME: zoolanding-auth-admin-test-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.sha }}
         run: printf 'name=%s\n' "$ARTIFACT_NAME" >> "$GITHUB_OUTPUT"
       - name: Upload exact validated artifact
+        if: steps.promotion.outputs.mode == 'legacy'
         id: upload
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -123,10 +149,81 @@ jobs:
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 30
+      - name: Assemble NONDEPLOYABLE validation artifact
+        if: steps.promotion.outputs.mode == 'thn-source-only'
+        id: validation-artifact
+        shell: bash
+        env:
+          EXPECTED_SOURCE_SHA: ${{ github.sha }}
+          EXPECTED_DEV_SHA: ${{ steps.promotion.outputs.dev_sha }}
+          EXPECTED_DEV_TREE: ${{ steps.promotion.outputs.dev_tree }}
+          EXPECTED_RUN_ID: ${{ github.run_id }}
+          EXPECTED_RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          digest="$(python tools/test_validation_artifact.py create .aws-sam/build .aws-sam/validation-manifest.json)"
+          [[ "$digest" =~ ^[a-f0-9]{64}$ ]] || { echo "manifest_digest_invalid"; exit 1; }
+          printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
+      - name: Upload NONDEPLOYABLE validation artifact
+        if: steps.promotion.outputs.mode == 'thn-source-only'
+        id: validation-upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: zoolanding-auth-admin-test-validation-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.sha }}
+          path: |
+            .aws-sam/build/
+            .aws-sam/validation-manifest.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 30
+
+  verify-thn-validation:
+    runs-on: ubuntu-latest
+    needs: validate
+    if: needs.validate.outputs.promotion_mode == 'thn-source-only'
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+      - name: Validate immutable validation-artifact ID
+        shell: bash
+        env:
+          EXPECTED_ARTIFACT_ID: ${{ needs.validate.outputs.validation_artifact_id }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]] || { echo "artifact_id_invalid"; exit 1; }
+      - name: Download NONDEPLOYABLE artifact by immutable ID
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          artifact-ids: ${{ needs.validate.outputs.validation_artifact_id }}
+          path: .thn-validation
+          merge-multiple: true
+      - name: Independently verify exact validation transport
+        shell: bash
+        env:
+          EXPECTED_SOURCE_SHA: ${{ github.sha }}
+          EXPECTED_DEV_SHA: ${{ needs.validate.outputs.dev_sha }}
+          EXPECTED_DEV_TREE: ${{ needs.validate.outputs.dev_tree }}
+          EXPECTED_RUN_ID: ${{ github.run_id }}
+          EXPECTED_RUN_ATTEMPT: ${{ github.run_attempt }}
+          EXPECTED_MANIFEST_SHA256: ${{ needs.validate.outputs.validation_manifest_digest }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA"
+          test "$(git rev-parse 'HEAD^{tree}')" = "$EXPECTED_DEV_TREE"
+          python tools/test_validation_artifact.py verify .thn-validation/build .thn-validation/validation-manifest.json
+          echo "THN source validation only; no AWS deployment or rollback artifact was produced." >> "$GITHUB_STEP_SUMMARY"
 
   deploy:
     runs-on: ubuntu-latest
     needs: validate
+    if: needs.validate.outputs.promotion_mode == 'legacy'
     environment: test
     permissions:
       contents: read
