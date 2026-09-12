@@ -74,8 +74,10 @@ jobs:
         env:
           LOG_LEVEL: ERROR
         run: python -m unittest discover -s tests -p "test_*.py"
-      - name: Run dependency audit
-        run: pip-audit -r requirements.txt
+      - name: Run dependency audits
+        run: |
+          pip-audit -r requirements.txt
+          pip-audit -r requirements-tools.txt
       - name: Set up SAM
         uses: aws-actions/setup-sam@v3
       - name: Validate SAM template
