@@ -167,10 +167,11 @@ class ReleaseExecutionTests(unittest.TestCase):
         session = Session()
         session.cfn.stack = stack(state=True)
         sha = environment()["GITHUB_SHA"]
+        provisioned_sha = self.tool.PROVISIONED_SOURCE_SHA
         for suffix in ("OwnerOperatorFunction", "OriginAuthorizerFunction", "Function"):
             logical = PREFIX + suffix
             session.cfn.candidate["Resources"][logical] = {"Type": "AWS::Serverless::Function", "Properties": {
-                "CodeUri": f"s3://example-test-artifacts/zoolanding-auth-admin-test/thn/100/1/{sha}/{'a' * 32}",
+                "CodeUri": f"s3://example-test-artifacts/zoolanding-auth-admin-test/thn/100/1/{provisioned_sha}/{'a' * 32}",
                 "Handler": "same.handler"}}
         session.cfn.template = deepcopy(session.cfn.candidate)
         for suffix in ("OwnerOperatorFunction", "OriginAuthorizerFunction", "Function"):

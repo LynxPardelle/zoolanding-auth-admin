@@ -52,6 +52,17 @@ PROVISIONED_FUNCTIONS = frozenset({
     PREFIX + "Function", PREFIX + "OriginAuthorizerFunction",
     PREFIX + "OwnerOperatorFunction",
 })
+PROVISIONED_SOURCE_SHA = "cbc17c8f560c8586be641faa0abc7c60bd17a698"
+ENABLE_SOURCE_DELTA_FILES = frozenset({
+    ".github/workflows/deploy-thn-test.yml",
+    "changelog/2026-09-19-thn-enable-provisioned-code.md",
+    "changelog/2026-09-19-thn-enable-source-transition.md",
+    "changelog/README.md",
+    "docs/thn-test-release.md",
+    "tests/test_thn_release_execution.py",
+    "tests/test_thn_test_release.py",
+    "tools/thn_test_release.py",
+})
 
 
 class ReleaseBlocked(RuntimeError):
@@ -116,6 +127,13 @@ def _thn_key(section: str, key: str) -> bool:
     return key.startswith(PREFIX)
 
 
+def verify_enable_source_delta(paths: list[str]) -> None:
+    """Permit only reviewed release tooling changes since provisioned source."""
+    if (not isinstance(paths, list) or not paths
+            or any(not isinstance(path, str) or path not in ENABLE_SOURCE_DELTA_FILES for path in paths)):
+        raise ReleaseBlocked("thn_runtime_source_changed")
+
+
 def preserve_provisioned_code(candidate: dict, previous: dict, source_sha: str, bucket: str) -> dict:
     """Enable the already-provisioned code without repackaging it into an update.
 
@@ -136,7 +154,7 @@ def preserve_provisioned_code(candidate: dict, previous: dict, source_sha: str, 
     if actual_functions != PROVISIONED_FUNCTIONS:
         raise ReleaseBlocked("provisioned_code_inventory_changed")
 
-    def pinned(uri: Any) -> bool:
+    def pinned(uri: Any, expected_sha: str) -> bool:
         if not isinstance(uri, str):
             return False
         parsed = urlparse(uri)
@@ -145,7 +163,7 @@ def preserve_provisioned_code(candidate: dict, previous: dict, source_sha: str, 
                 and not parsed.params and not parsed.query and not parsed.fragment
                 and len(parts) == 6 and parts[0:2] == [STACK, "thn"]
                 and all(re.fullmatch(r"[1-9][0-9]*", part) for part in parts[2:4])
-                and parts[4] == source_sha and bool(re.fullmatch(r"[a-f0-9]{32}", parts[5])))
+                and parts[4] == expected_sha and bool(re.fullmatch(r"[a-f0-9]{32}", parts[5])))
 
     for logical in sorted(PROVISIONED_FUNCTIONS):
         old, new = old_resources[logical], new_resources.get(logical)
@@ -154,7 +172,8 @@ def preserve_provisioned_code(candidate: dict, previous: dict, source_sha: str, 
         old_properties, new_properties = old.get("Properties"), new.get("Properties")
         if not isinstance(old_properties, dict) or not isinstance(new_properties, dict):
             raise ReleaseBlocked("provisioned_code_properties_invalid")
-        if not pinned(old_properties.get("CodeUri")) or not pinned(new_properties.get("CodeUri")):
+        if (not pinned(old_properties.get("CodeUri"), PROVISIONED_SOURCE_SHA)
+                or not pinned(new_properties.get("CodeUri"), source_sha)):
             raise ReleaseBlocked("provisioned_code_source_changed")
         with_old_code = deepcopy(new)
         with_old_code["Properties"]["CodeUri"] = old_properties["CodeUri"]

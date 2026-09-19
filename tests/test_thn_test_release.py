@@ -133,15 +133,16 @@ class ThnTestReleaseTests(unittest.TestCase):
         combined = self.tool.compose_template(candidate, old, operation="disable")
         self.assertEqual(combined, old)
 
-    def test_enable_keeps_provisioned_thn_code_from_the_same_source_commit(self):
+    def test_enable_keeps_provisioned_thn_code_when_runtime_source_is_unchanged(self):
         old, candidate = templates()
         sha = "a" * 40
+        provisioned_sha = "cbc17c8f560c8586be641faa0abc7c60bd17a698"
         bucket = "test-artifacts"
         logicals = ("OwnerOperatorFunction", "OriginAuthorizerFunction", "Function")
         for index, suffix in enumerate(logicals, 1):
             logical = PREFIX + suffix
             old["Resources"][logical] = {"Type": "AWS::Serverless::Function", "Properties": {
-                "CodeUri": f"s3://{bucket}/zoolanding-auth-admin-test/thn/100/1/{sha}/{'a' * 31}{index}",
+                "CodeUri": f"s3://{bucket}/zoolanding-auth-admin-test/thn/100/1/{provisioned_sha}/{'a' * 31}{index}",
                 "Handler": "same.handler", "Environment": {"Variables": {"MODE": "test"}}}}
             candidate["Resources"][logical] = deepcopy(old["Resources"][logical])
             candidate["Resources"][logical]["Properties"]["CodeUri"] = (
@@ -155,14 +156,24 @@ class ThnTestReleaseTests(unittest.TestCase):
         self.assertEqual(self.tool.compose_template(frozen, old)["Resources"]["AuthAdminFunction"],
                          old["Resources"]["AuthAdminFunction"])
 
+    def test_enable_source_delta_allows_release_files_but_rejects_runtime_code(self):
+        self.tool.verify_enable_source_delta([
+            "tools/thn_test_release.py",
+            "tests/test_thn_test_release.py",
+            ".github/workflows/deploy-thn-test.yml",
+        ])
+        with self.assertRaises(self.tool.ReleaseBlocked):
+            self.tool.verify_enable_source_delta(["lambda_function.py"])
+
     def test_enable_cannot_hide_a_code_or_configuration_change(self):
         old, candidate = templates()
         sha = "a" * 40
+        provisioned_sha = "cbc17c8f560c8586be641faa0abc7c60bd17a698"
         bucket = "test-artifacts"
         for suffix in ("OwnerOperatorFunction", "OriginAuthorizerFunction", "Function"):
             logical = PREFIX + suffix
             old["Resources"][logical] = {"Type": "AWS::Serverless::Function", "Properties": {
-                "CodeUri": f"s3://{bucket}/zoolanding-auth-admin-test/thn/100/1/{sha}/{'a' * 32}", "Handler": "same.handler"}}
+                "CodeUri": f"s3://{bucket}/zoolanding-auth-admin-test/thn/100/1/{provisioned_sha}/{'a' * 32}", "Handler": "same.handler"}}
             candidate["Resources"][logical] = deepcopy(old["Resources"][logical])
             candidate["Resources"][logical]["Properties"]["CodeUri"] = (
                 f"s3://{bucket}/zoolanding-auth-admin-test/thn/200/1/{sha}/{'b' * 32}")
@@ -179,6 +190,12 @@ class ThnTestReleaseTests(unittest.TestCase):
         del changed["Resources"][PREFIX + "Function"]
         with self.assertRaises(self.tool.ReleaseBlocked):
             self.tool.preserve_provisioned_code(changed, old, sha, bucket)
+        changed_old = deepcopy(old)
+        changed_old["Resources"][PREFIX + "Function"]["Properties"]["CodeUri"] = (
+            changed_old["Resources"][PREFIX + "Function"]["Properties"]["CodeUri"].replace(
+                provisioned_sha, "b" * 40))
+        with self.assertRaises(self.tool.ReleaseBlocked):
+            self.tool.preserve_provisioned_code(candidate, changed_old, sha, bucket)
 
     def test_shared_globals_cannot_change(self):
         old, candidate = templates()
