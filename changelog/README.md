@@ -6,6 +6,7 @@ Keep entries chronological, scoped to one change or verification pass, and times
 
 ## Entries
 
+- [2026-09-19 — Validate THN enable source transition](2026-09-19-thn-enable-source-transition.md)
 - [2026-09-19 — Preserve provisioned THN code during enable](2026-09-19-thn-enable-provisioned-code.md)
 - [2026-09-12 — Exact-source THN TEST validation](2026-09-12-thn-source-only-promotion.md)
 - [2026-09-08 — Isolated QA lifecycle and epoch revocation](2026-09-08-thn-qa-lifecycle.md)

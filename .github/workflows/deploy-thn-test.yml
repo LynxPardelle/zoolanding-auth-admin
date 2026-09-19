@@ -62,6 +62,27 @@ jobs:
           [[ "$EXPECTED_SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]]
           test "$GITHUB_SHA" = "$EXPECTED_SOURCE_SHA"
           test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA"
+      - name: Verify enable has no runtime-source changes since provisioning
+        if: inputs.operation == 'enable'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          import subprocess
+          from tools.thn_test_release import PROVISIONED_SOURCE_SHA, verify_enable_source_delta
+
+          head = os.environ["GITHUB_SHA"]
+          ancestry = subprocess.run(
+              ["git", "merge-base", "--is-ancestor", PROVISIONED_SOURCE_SHA, head],
+              check=False, capture_output=True)
+          if ancestry.returncode:
+              raise SystemExit("provisioned_source_not_ancestor")
+          changed = subprocess.run(
+              ["git", "diff", "--name-only", "-z", PROVISIONED_SOURCE_SHA + ".." + head],
+              check=True, capture_output=True).stdout.decode("utf-8")
+          verify_enable_source_delta([path for path in changed.split("\0") if path])
+          PY
       - uses: aws-actions/setup-sam@89ddb14d60e682855e3fea4be85b3c56485de310 # v3
         with:
           version: 1.163.0
