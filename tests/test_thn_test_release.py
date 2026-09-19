@@ -133,6 +133,53 @@ class ThnTestReleaseTests(unittest.TestCase):
         combined = self.tool.compose_template(candidate, old, operation="disable")
         self.assertEqual(combined, old)
 
+    def test_enable_keeps_provisioned_thn_code_from_the_same_source_commit(self):
+        old, candidate = templates()
+        sha = "a" * 40
+        bucket = "test-artifacts"
+        logicals = ("OwnerOperatorFunction", "OriginAuthorizerFunction", "Function")
+        for index, suffix in enumerate(logicals, 1):
+            logical = PREFIX + suffix
+            old["Resources"][logical] = {"Type": "AWS::Serverless::Function", "Properties": {
+                "CodeUri": f"s3://{bucket}/zoolanding-auth-admin-test/thn/100/1/{sha}/{'a' * 31}{index}",
+                "Handler": "same.handler", "Environment": {"Variables": {"MODE": "test"}}}}
+            candidate["Resources"][logical] = deepcopy(old["Resources"][logical])
+            candidate["Resources"][logical]["Properties"]["CodeUri"] = (
+                f"s3://{bucket}/zoolanding-auth-admin-test/thn/200/1/{sha}/{'b' * 31}{index}")
+        unchanged_candidate = deepcopy(candidate)
+        frozen = self.tool.preserve_provisioned_code(candidate, old, sha, bucket)
+        self.assertEqual(candidate, unchanged_candidate)
+        for suffix in logicals:
+            logical = PREFIX + suffix
+            self.assertEqual(frozen["Resources"][logical], old["Resources"][logical])
+        self.assertEqual(self.tool.compose_template(frozen, old)["Resources"]["AuthAdminFunction"],
+                         old["Resources"]["AuthAdminFunction"])
+
+    def test_enable_cannot_hide_a_code_or_configuration_change(self):
+        old, candidate = templates()
+        sha = "a" * 40
+        bucket = "test-artifacts"
+        for suffix in ("OwnerOperatorFunction", "OriginAuthorizerFunction", "Function"):
+            logical = PREFIX + suffix
+            old["Resources"][logical] = {"Type": "AWS::Serverless::Function", "Properties": {
+                "CodeUri": f"s3://{bucket}/zoolanding-auth-admin-test/thn/100/1/{sha}/{'a' * 32}", "Handler": "same.handler"}}
+            candidate["Resources"][logical] = deepcopy(old["Resources"][logical])
+            candidate["Resources"][logical]["Properties"]["CodeUri"] = (
+                f"s3://{bucket}/zoolanding-auth-admin-test/thn/200/1/{sha}/{'b' * 32}")
+        changed = deepcopy(candidate)
+        changed["Resources"][PREFIX + "OwnerOperatorFunction"]["Properties"]["Handler"] = "other.handler"
+        with self.assertRaises(self.tool.ReleaseBlocked):
+            self.tool.preserve_provisioned_code(changed, old, sha, bucket)
+        changed = deepcopy(candidate)
+        changed["Resources"][PREFIX + "OwnerOperatorFunction"]["Properties"]["CodeUri"] = (
+            f"s3://{bucket}/zoolanding-auth-admin-test/thn/200/1/{'b' * 40}/{'b' * 32}")
+        with self.assertRaises(self.tool.ReleaseBlocked):
+            self.tool.preserve_provisioned_code(changed, old, sha, bucket)
+        changed = deepcopy(candidate)
+        del changed["Resources"][PREFIX + "Function"]
+        with self.assertRaises(self.tool.ReleaseBlocked):
+            self.tool.preserve_provisioned_code(changed, old, sha, bucket)
+
     def test_shared_globals_cannot_change(self):
         old, candidate = templates()
         candidate["Globals"]["Function"]["Runtime"] = "python3.14"
