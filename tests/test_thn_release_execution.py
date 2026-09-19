@@ -166,12 +166,25 @@ class ReleaseExecutionTests(unittest.TestCase):
     def test_enable_requires_protected_existing_state_and_never_changes_shared_parameters(self):
         session = Session()
         session.cfn.stack = stack(state=True)
+        sha = environment()["GITHUB_SHA"]
+        for suffix in ("OwnerOperatorFunction", "OriginAuthorizerFunction", "Function"):
+            logical = PREFIX + suffix
+            session.cfn.candidate["Resources"][logical] = {"Type": "AWS::Serverless::Function", "Properties": {
+                "CodeUri": f"s3://example-test-artifacts/zoolanding-auth-admin-test/thn/100/1/{sha}/{'a' * 32}",
+                "Handler": "same.handler"}}
         session.cfn.template = deepcopy(session.cfn.candidate)
+        for suffix in ("OwnerOperatorFunction", "OriginAuthorizerFunction", "Function"):
+            session.cfn.candidate["Resources"][PREFIX + suffix]["Properties"]["CodeUri"] = (
+                f"s3://example-test-artifacts/zoolanding-auth-admin-test/thn/123/1/{sha}/{'b' * 32}")
         result = self.run_release(session, {**environment(), "THN_V2_TEST_PARAMETERS_JSON": json.dumps(selection())}, "enable")
         self.assertEqual(result["operation"], "enable")
         current = {p["ParameterKey"]: p["ParameterValue"] for p in session.cfn.stack["Parameters"]}
         self.assertEqual(current["EnableThnAuthAdminV2"], "true")
         self.assertEqual(current["AuthAdminConfigJsonBase64"], "****")
+        uploaded = json.loads(session.s3.objects[0]["Body"])
+        for suffix in ("OwnerOperatorFunction", "OriginAuthorizerFunction", "Function"):
+            logical = PREFIX + suffix
+            self.assertEqual(uploaded["Resources"][logical], session.cfn.template["Resources"][logical])
 
     def test_disable_preserves_live_template_and_does_not_package_new_code(self):
         session = Session()

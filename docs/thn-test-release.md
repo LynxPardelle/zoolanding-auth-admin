@@ -94,7 +94,7 @@ full commit SHA as `expected_source_sha` and exactly one `operation`:
 | Operation | Effect | Preserved |
 | --- | --- | --- |
 | `provision` | Creates isolated retained state, functions and roles; HTTP and owner URL stay absent | Shared v1 resources and configuration |
-| `enable` | Requires previously provisioned state and a complete reviewed descriptor/origin-proof selection; creates the dedicated routes | Retained state, shared v1 resources |
+| `enable` | Requires previously provisioned state and a complete reviewed descriptor/origin-proof selection; creates the dedicated routes using the provisioned function packages from the same source commit | Retained state, shared v1 resources and provisioned Lambda code |
 | `disable` | Removes only additive routes, URL permissions, operator-invoke policy and alarms, using the live template without rebuilding code | Functions, execution roles, mediator direct-invoke guard, immutable versions, accounts, tables and logs |
 
 Disable the registry/writer access through its owning operator procedure before
@@ -124,6 +124,14 @@ including the shared authentication configuration; the workflow never loads or
 review refuses any non-THN resource change, unknown resource type, state
 deletion, function/role deletion or replacement. A previous Lambda version can
 leave stack management only with the explicit `Retain` policy.
+
+For `enable`, the validated build may resolve newer transitive dependencies even
+when its Git commit is unchanged. The release checks that all three provisioned
+THN functions still have the same properties and source commit, then reuses
+their deployed package references. A code or function-property change blocks
+activation and requires a separately reviewed release; it is never hidden by
+the activation step. This also avoids a spurious possible replacement of the
+owner mediator's resource policy when SAM would otherwise republish its alias.
 
 Immediately before execution the stack/template/inventory must still match the
 preflight. Afterwards, two observations verify parameters, stable identities,

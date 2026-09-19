@@ -20,6 +20,7 @@ import subprocess
 import tempfile
 import time
 from typing import Any
+from urllib.parse import urlparse
 
 _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
@@ -47,6 +48,10 @@ REMOVABLE_TYPES = frozenset({"AWS::Lambda::Permission", "AWS::Lambda::Url",
     "AWS::IAM::Policy", "AWS::ApiGatewayV2::Api", "AWS::ApiGatewayV2::Stage",
     "AWS::ApiGatewayV2::Deployment", "AWS::ApiGatewayV2::Integration", "AWS::ApiGatewayV2::Route",
     "AWS::ApiGatewayV2::Authorizer", "AWS::CloudWatch::Alarm"})
+PROVISIONED_FUNCTIONS = frozenset({
+    PREFIX + "Function", PREFIX + "OriginAuthorizerFunction",
+    PREFIX + "OwnerOperatorFunction",
+})
 
 
 class ReleaseBlocked(RuntimeError):
@@ -109,6 +114,54 @@ def _thn_key(section: str, key: str) -> bool:
     if section == "Conditions":
         return key.startswith("Is" + PREFIX)
     return key.startswith(PREFIX)
+
+
+def preserve_provisioned_code(candidate: dict, previous: dict, source_sha: str, bucket: str) -> dict:
+    """Enable the already-provisioned code without repackaging it into an update.
+
+    The release build is still validated. A separate reviewed release is needed
+    when code or any function property actually changes.
+    """
+    if (not re.fullmatch(r"[a-f0-9]{40}", source_sha or "")
+            or not re.fullmatch(r"[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]", bucket or "")
+            or not isinstance(candidate, dict) or not isinstance(previous, dict)):
+        raise ReleaseBlocked("provisioned_code_source_invalid")
+    result = deepcopy(candidate)
+    old_resources, new_resources = previous.get("Resources"), result.get("Resources")
+    if not isinstance(old_resources, dict) or not isinstance(new_resources, dict):
+        raise ReleaseBlocked("provisioned_code_resources_invalid")
+    actual_functions = {key for key, value in old_resources.items()
+                        if key.startswith(PREFIX) and isinstance(value, dict)
+                        and value.get("Type") == "AWS::Serverless::Function"}
+    if actual_functions != PROVISIONED_FUNCTIONS:
+        raise ReleaseBlocked("provisioned_code_inventory_changed")
+
+    def pinned(uri: Any) -> bool:
+        if not isinstance(uri, str):
+            return False
+        parsed = urlparse(uri)
+        parts = parsed.path.lstrip("/").split("/")
+        return (parsed.scheme == "s3" and parsed.netloc == bucket
+                and not parsed.params and not parsed.query and not parsed.fragment
+                and len(parts) == 6 and parts[0:2] == [STACK, "thn"]
+                and all(re.fullmatch(r"[1-9][0-9]*", part) for part in parts[2:4])
+                and parts[4] == source_sha and bool(re.fullmatch(r"[a-f0-9]{32}", parts[5])))
+
+    for logical in sorted(PROVISIONED_FUNCTIONS):
+        old, new = old_resources[logical], new_resources.get(logical)
+        if not isinstance(new, dict) or new.get("Type") != "AWS::Serverless::Function":
+            raise ReleaseBlocked("provisioned_code_resource_changed")
+        old_properties, new_properties = old.get("Properties"), new.get("Properties")
+        if not isinstance(old_properties, dict) or not isinstance(new_properties, dict):
+            raise ReleaseBlocked("provisioned_code_properties_invalid")
+        if not pinned(old_properties.get("CodeUri")) or not pinned(new_properties.get("CodeUri")):
+            raise ReleaseBlocked("provisioned_code_source_changed")
+        with_old_code = deepcopy(new)
+        with_old_code["Properties"]["CodeUri"] = old_properties["CodeUri"]
+        if with_old_code != old:
+            raise ReleaseBlocked("provisioned_code_properties_changed")
+        new_resources[logical] = deepcopy(old)
+    return result
 
 
 def compose_template(candidate: dict, previous: dict, operation: str = "enable") -> dict:
@@ -287,6 +340,8 @@ def run_release(session: Any, env: dict, build: Path, operation: str) -> dict:
         _verify_retained_state(session, initial_inventory, previous)
     prefix = f"{STACK}/thn/{env['GITHUB_RUN_ID']}/{env['GITHUB_RUN_ATTEMPT']}/{env['GITHUB_SHA']}"
     candidate = previous if operation == "disable" else _package_template(build, env["ARTIFACTS_BUCKET"], prefix)
+    if operation == "enable":
+        candidate = preserve_provisioned_code(candidate, previous, env["GITHUB_SHA"], env["ARTIFACTS_BUCKET"])
     template = compose_template(candidate, previous, operation)
     serialized = json.dumps(template, sort_keys=True, separators=(",", ":")).encode()
     key = prefix + "/template-" + hashlib.sha256(serialized).hexdigest() + ".json"
