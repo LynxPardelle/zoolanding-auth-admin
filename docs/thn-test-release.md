@@ -96,6 +96,7 @@ full commit SHA as `expected_source_sha` and exactly one `operation`:
 | `provision` | Creates isolated retained state, functions and roles; HTTP and owner URL stay absent | Shared v1 resources and configuration |
 | `enable` | Requires previously provisioned state and a complete reviewed descriptor/origin-proof selection; creates the dedicated routes using the provisioned function packages after a source-only transition check | Retained state, shared v1 resources and provisioned Lambda code |
 | `operator-patch` | Updates only the owner mediator package and adds `GetUserPoolMfaConfig` on its exact pool role after a reviewed TEST merge | Active routes, shared v1, all parameters, retained state and the other function packages |
+| `authorizer-patch` | Updates only the THN origin authorizer package after a reviewed TEST merge | Active routes, shared v1, all parameters, retained state, roles and the other function packages |
 | `disable` | Removes only additive routes, URL permissions, operator-invoke policy and alarms, using the live template without rebuilding code | Functions, execution roles, mediator direct-invoke guard, immutable versions, accounts, tables and logs |
 
 Disable the registry/writer access through its owning operator procedure before
@@ -147,6 +148,16 @@ review permits only the mediator function, role, alias and retained versions.
 All deployed parameters use `UsePreviousValue`; the operation keeps routes and
 other function packages active. A deployment still requires explicit approval
 under this repository's agent guide.
+
+`authorizer-patch` is the narrow release for diagnosing an active TEST session
+denial. It requires the same active-state and exact `dev -> test` promotion
+checks. The candidate template must match the live stack except for the
+origin authorizer's packaged `CodeUri`; the change set may modify only that
+Lambda function, without replacement. Denial logs contain fixed reason labels
+only, never request headers, account data, IP addresses or the origin proof.
+The operation preserves the other function packages, routes, IAM, parameters
+and retained resources. A later behavior change needs a separate review and
+deployment after the diagnostic reason is observed.
 
 Immediately before execution the stack/template/inventory must still match the
 preflight. Afterwards, two observations verify parameters, stable identities,

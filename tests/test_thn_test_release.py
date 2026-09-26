@@ -108,6 +108,21 @@ class ThnTestReleaseTests(unittest.TestCase):
             with self.subTest(paths=paths), self.assertRaises(self.tool.ReleaseBlocked):
                 self.tool.verify_operator_patch_source_delta(paths)
 
+    def test_authorizer_patch_requires_active_state_and_exact_source_delta(self):
+        with self.assertRaises(self.tool.ReleaseBlocked):
+            self.tool.lifecycle_parameters(stack(state=True), "authorizer-patch", None)
+        parameters = self.tool.lifecycle_parameters(stack(enabled=True, state=True), "authorizer-patch", None)
+        self.assertTrue(all(item.get("UsePreviousValue") is True for item in parameters))
+        self.tool.verify_authorizer_patch_source_delta([
+            "auth_admin_origin_authorizer_v2.py", "tools/thn_test_release.py",
+            ".github/workflows/deploy-thn-test.yml",
+        ])
+        for paths in (["tools/thn_test_release.py"],
+                      ["auth_admin_origin_authorizer_v2.py", "template.yaml"],
+                      ["auth_admin_origin_authorizer_v2.py"] * 2):
+            with self.subTest(paths=paths), self.assertRaises(self.tool.ReleaseBlocked):
+                self.tool.verify_authorizer_patch_source_delta(paths)
+
     def test_enable_rejects_hidden_disable_or_state_removal(self):
         for key in ("EnableThnAuthAdminV2", "ProvisionThnAuthAdminV2State"):
             payload = selection()
@@ -239,6 +254,46 @@ class ThnTestReleaseTests(unittest.TestCase):
         ):
             with self.subTest(forbidden=forbidden), self.assertRaises(self.tool.ReleaseBlocked):
                 self.tool.review_resources([forbidden], "operator-patch")
+
+    def test_authorizer_patch_changes_only_authorizer_code_and_rejects_other_resources(self):
+        _, old = templates()
+        sha = "a" * 40
+        bucket = "test-artifacts"
+        for suffix in ("OwnerOperatorFunction", "OriginAuthorizerFunction", "Function"):
+            logical = PREFIX + suffix
+            old["Resources"][logical] = {"Type": "AWS::Serverless::Function", "Properties": {
+                "CodeUri": "s3://test-artifacts/old", "Handler": "same.handler"}}
+        candidate = deepcopy(old)
+        for suffix in ("OwnerOperatorFunction", "OriginAuthorizerFunction", "Function"):
+            candidate["Resources"][PREFIX + suffix]["Properties"]["CodeUri"] = (
+                f"s3://{bucket}/zoolanding-auth-admin-test/thn/200/1/{sha}/{'b' * 32}")
+        before = deepcopy(candidate)
+        result = self.tool.prepare_authorizer_patch(candidate, old, sha, bucket)
+        self.assertEqual(candidate, before)
+        self.assertEqual(result["Resources"][PREFIX + "OriginAuthorizerFunction"],
+                         candidate["Resources"][PREFIX + "OriginAuthorizerFunction"])
+        for suffix in ("OwnerOperatorFunction", "Function"):
+            self.assertEqual(result["Resources"][PREFIX + suffix], old["Resources"][PREFIX + suffix])
+        changed = deepcopy(candidate)
+        changed["Resources"][PREFIX + "Function"]["Properties"]["Handler"] = "other.handler"
+        with self.assertRaises(self.tool.ReleaseBlocked):
+            self.tool.prepare_authorizer_patch(changed, old, sha, bucket)
+        changed = deepcopy(candidate)
+        changed["Resources"][PREFIX + "OriginAuthorizerFunction"]["Properties"]["Role"] = "wider"
+        with self.assertRaises(self.tool.ReleaseBlocked):
+            self.tool.prepare_authorizer_patch(changed, old, sha, bucket)
+
+        allowed = {"Type": "Resource", "ResourceChange": {
+            "LogicalResourceId": PREFIX + "OriginAuthorizerFunction",
+            "ResourceType": "AWS::Lambda::Function", "Action": "Modify", "Replacement": "False"}}
+        self.tool.review_resources([allowed], "authorizer-patch")
+        for logical, kind in ((PREFIX + "Function", "AWS::Lambda::Function"),
+                              (PREFIX + "SessionTable", "AWS::DynamoDB::Table"),
+                              (PREFIX + "OriginAuthorizerFunctionRole", "AWS::IAM::Role")):
+            forbidden = deepcopy(allowed)
+            forbidden["ResourceChange"].update(LogicalResourceId=logical, ResourceType=kind)
+            with self.subTest(logical=logical), self.assertRaises(self.tool.ReleaseBlocked):
+                self.tool.review_resources([forbidden], "authorizer-patch")
 
     def test_enable_cannot_hide_a_code_or_configuration_change(self):
         old, candidate = templates()
@@ -389,8 +444,9 @@ class WorkflowBoundaryTests(unittest.TestCase):
         self.assertNotIn("AUTH_ADMIN_CONFIG_JSON_BASE64", workflow)
         self.assertNotIn("check_thn_v2_ordinary_deploy.py", workflow)
         self.assertNotIn("run_test_change_set.sh", workflow)
-        self.assertIn("options: [provision, enable, operator-patch, disable]", workflow)
+        self.assertIn("options: [provision, enable, operator-patch, authorizer-patch, disable]", workflow)
         self.assertIn("verify_operator_patch_source_delta", workflow)
+        self.assertIn("verify_authorizer_patch_source_delta", workflow)
         deploy_job = workflow.split("\n  deploy:\n", 1)[1]
         self.assertNotIn("actions/checkout", deploy_job)
         self.assertIn("zoolanding-auth-admin-test-deploy", workflow)
