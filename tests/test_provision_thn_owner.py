@@ -900,7 +900,11 @@ class ThnOwnerDiscoveryTests(unittest.TestCase):
             {"MfaConfiguration": "OPTIONAL", "SoftwareTokenMfaConfiguration": {"Enabled": True}},
             {"MfaConfiguration": "ON", "SoftwareTokenMfaConfiguration": {"Enabled": False}},
             {"MfaConfiguration": "ON", "SoftwareTokenMfaConfiguration": {"Enabled": True},
+             "SmsMfaConfiguration": {}},
+            {"MfaConfiguration": "ON", "SoftwareTokenMfaConfiguration": {"Enabled": True},
              "SmsMfaConfiguration": {"SmsAuthenticationMessage": "code {####}"}},
+            {"MfaConfiguration": "ON", "SoftwareTokenMfaConfiguration": {"Enabled": True},
+             "EmailMfaConfiguration": {}},
             {"MfaConfiguration": "ON", "SoftwareTokenMfaConfiguration": {"Enabled": True},
              "EmailMfaConfiguration": {"Subject": "code"}},
         )

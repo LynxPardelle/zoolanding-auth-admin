@@ -233,8 +233,8 @@ def discover_dedicated_resources(
             or mfa.get("MfaConfiguration") != "ON"
             or not isinstance(software_mfa, Mapping)
             or software_mfa.get("Enabled") is not True
-            or mfa.get("SmsMfaConfiguration")
-            or mfa.get("EmailMfaConfiguration")
+            or mfa.get("SmsMfaConfiguration") is not None
+            or mfa.get("EmailMfaConfiguration") is not None
         ):
             raise OwnerProvisioningError("dedicated THN resources are unavailable")
 
