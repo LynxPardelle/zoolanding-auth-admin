@@ -116,10 +116,17 @@ jobs:
           python - <<'PY'
           import subprocess
           from tools.thn_test_release import verify_authorizer_patch_source_delta
-          changed = subprocess.run(
-              ["git", "diff", "--name-only", "-z", "HEAD^1", "HEAD"],
-              check=True, capture_output=True).stdout.decode("utf-8")
-          verify_authorizer_patch_source_delta([path for path in changed.split("\0") if path])
+          def git(*args):
+              return subprocess.run(["git", *args], check=True, capture_output=True).stdout
+          changed = [path for path in git("diff", "--name-only", "-z", "HEAD^1", "HEAD").decode().split("\0") if path]
+          prior = None
+          if "auth_admin_origin_authorizer_v2.py" not in changed:
+              parents = git("rev-list", "--parents", "-n", "1", "HEAD^1").decode().split()
+              if (len(parents) != 3 or git("rev-parse", "HEAD^1^{tree}")
+                      != git("rev-parse", "HEAD^1^2^{tree}")):
+                  raise SystemExit("authorizer_patch_prior_promotion_invalid")
+              prior = [path for path in git("diff", "--name-only", "-z", "HEAD^1^1", "HEAD^1").decode().split("\0") if path]
+          verify_authorizer_patch_source_delta(changed, prior)
           PY
       - uses: aws-actions/setup-sam@89ddb14d60e682855e3fea4be85b3c56485de310 # v3
         with:
