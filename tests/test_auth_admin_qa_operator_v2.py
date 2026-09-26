@@ -273,8 +273,8 @@ class QaOperatorTests(unittest.TestCase):
                     self.assertFalse(any(key[2] == current.APPROVED_OWNER_BINDING_SORT_KEY for key in self.session.dynamodb.items))
 
     def test_owner_cli_and_template_bytes_are_frozen(self):
-        expected = {'tools/provision_thn_owner.py': '6347b78e06dedcab2c537940b151c20b5c7b4560cf51900e8851c92aa5dbd64a',
-                    'template.yaml': '3cc898ee2604b36585f3cd5ffa9812897e3ccedb6a8124276f47637a5398bd8d'}
+        expected = {'tools/provision_thn_owner.py': '86a236ef036b8360dc54a6be2323a912ce8bb0a09151391f6215a47005d8eb91',
+                    'template.yaml': '3ab843d718d611811acae9aef051281ab598a28c1442dd2ec01d779b687b8f24'}
         # Normalize git checkout line endings; evidence records exact local bytes separately.
         for path, digest in expected.items():
             self.assertEqual(hashlib.sha256((ROOT / path).read_bytes().replace(b'\r\n', b'\n')).hexdigest(), digest)

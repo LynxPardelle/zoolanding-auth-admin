@@ -26,6 +26,7 @@ class CloudFormation:
         self.executed = False
         self.deleted = False
         self.drift = False
+        self.patch_changes = False
         self.change_parameters = []
 
     def describe_stacks(self, **kwargs):
@@ -60,11 +61,16 @@ class CloudFormation:
         for p in self.change_parameters:
             if "ParameterValue" in p:
                 current[p["ParameterKey"]] = p["ParameterValue"]
+        changes = ([{"Type": "Resource", "ResourceChange": {"Action": "Modify", "Replacement": "False",
+                    "ResourceType": "AWS::IAM::Role", "LogicalResourceId": PREFIX + "OwnerOperatorFunctionRole"}},
+                   {"Type": "Resource", "ResourceChange": {"Action": "Modify", "Replacement": "False",
+                    "ResourceType": "AWS::Lambda::Function", "LogicalResourceId": PREFIX + "OwnerOperatorFunction"}}]
+                   if self.patch_changes else [{"Type": "Resource", "ResourceChange": {"Action": "Add", "Replacement": "False",
+                    "ResourceType": "AWS::DynamoDB::Table", "LogicalResourceId": "AuthAdminFunction" if self.drift else PREFIX + "SessionTable"}}])
         return {"StackName": self.stack["StackName"], "ChangeSetId": self.arn, "ChangeSetName": self.name,
                 "Status": "CREATE_COMPLETE", "ExecutionStatus": "AVAILABLE",
                 "Parameters": [{"ParameterKey": k, "ParameterValue": v} for k, v in current.items()],
-                "Changes": [{"Type": "Resource", "ResourceChange": {"Action": "Add", "Replacement": "False",
-                    "ResourceType": "AWS::DynamoDB::Table", "LogicalResourceId": "AuthAdminFunction" if self.drift else PREFIX + "SessionTable"}}]}
+                "Changes": changes}
 
     def execute_change_set(self, **kwargs):
         self.executed = True
@@ -200,6 +206,39 @@ class ReleaseExecutionTests(unittest.TestCase):
         self.assertEqual(current["ProvisionThnAuthAdminV2State"], "true")
         self.assertEqual(json.loads(session.s3.objects[0]["Body"]), session.cfn.template)
         self.assertEqual(result["operation"], "disable")
+
+    def test_operator_patch_keeps_active_routes_and_other_function_packages(self):
+        session = Session()
+        session.cfn.stack = stack(enabled=True, state=True)
+        session.cfn.patch_changes = True
+        role = PREFIX + "OwnerOperatorFunctionRole"
+        operator = PREFIX + "OwnerOperatorFunction"
+        for suffix in ("OwnerOperatorFunction", "OriginAuthorizerFunction", "Function"):
+            logical = PREFIX + suffix
+            session.cfn.candidate["Resources"][logical] = {"Type": "AWS::Serverless::Function", "Properties": {
+                "CodeUri": "s3://example-test-artifacts/old", "Handler": "same.handler"}}
+        session.cfn.candidate["Resources"][role] = {"Type": "AWS::IAM::Role", "Properties": {"Policies": [
+            {"PolicyDocument": {"Statement": [{"Sid": "MutateExactThnOwnerPool",
+                "Action": ["cognito-idp:GetGroup"]}]}}]}}
+        session.cfn.template = deepcopy(session.cfn.candidate)
+        sha = environment()["GITHUB_SHA"]
+        for suffix in ("OwnerOperatorFunction", "OriginAuthorizerFunction", "Function"):
+            logical = PREFIX + suffix
+            session.cfn.candidate["Resources"][logical]["Properties"]["CodeUri"] = (
+                f"s3://example-test-artifacts/zoolanding-auth-admin-test/thn/123/1/{sha}/{'b' * 32}")
+        session.cfn.candidate["Resources"][role]["Properties"]["Policies"][0]["PolicyDocument"]["Statement"][0]["Action"].append(
+            "cognito-idp:GetUserPoolMfaConfig")
+        result = self.run_release(session, operation="operator-patch")
+        self.assertTrue(session.cfn.executed)
+        self.assertEqual(result["operation"], "operator-patch")
+        uploaded = json.loads(session.s3.objects[0]["Body"])
+        self.assertEqual(uploaded["Resources"][operator], session.cfn.candidate["Resources"][operator])
+        for suffix in ("OriginAuthorizerFunction", "Function"):
+            logical = PREFIX + suffix
+            self.assertEqual(uploaded["Resources"][logical], session.cfn.template["Resources"][logical])
+        self.assertEqual(uploaded["Resources"][role], session.cfn.candidate["Resources"][role])
+        values = {p["ParameterKey"]: p["ParameterValue"] for p in session.cfn.stack["Parameters"]}
+        self.assertEqual(values["EnableThnAuthAdminV2"], "true")
 
 
 if __name__ == "__main__":

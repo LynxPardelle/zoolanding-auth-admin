@@ -95,6 +95,7 @@ full commit SHA as `expected_source_sha` and exactly one `operation`:
 | --- | --- | --- |
 | `provision` | Creates isolated retained state, functions and roles; HTTP and owner URL stay absent | Shared v1 resources and configuration |
 | `enable` | Requires previously provisioned state and a complete reviewed descriptor/origin-proof selection; creates the dedicated routes using the provisioned function packages after a source-only transition check | Retained state, shared v1 resources and provisioned Lambda code |
+| `operator-patch` | Updates only the owner mediator package and adds `GetUserPoolMfaConfig` on its exact pool role after a reviewed TEST merge | Active routes, shared v1, all parameters, retained state and the other function packages |
 | `disable` | Removes only additive routes, URL permissions, operator-invoke policy and alarms, using the live template without rebuilding code | Functions, execution roles, mediator direct-invoke guard, immutable versions, accounts, tables and logs |
 
 Disable the registry/writer access through its owning operator procedure before
@@ -137,6 +138,16 @@ separately reviewed release rather than being hidden by activation. This also
 avoids a spurious possible replacement of the owner mediator's resource policy
 when SAM would otherwise republish its alias.
 
+`operator-patch` is the separate reviewed release for the TEST QA MFA preflight
+fix. It requires an active retained-state stack and an exact `dev -> test` merge
+whose changed paths are allowlisted. The composer compares the packaged source
+with the live stack and permits only the mediator `CodeUri` and the exact
+`cognito-idp:GetUserPoolMfaConfig` action on its pool-scoped role. Its change-set
+review permits only the mediator function, role, alias and retained versions.
+All deployed parameters use `UsePreviousValue`; the operation keeps routes and
+other function packages active. A deployment still requires explicit approval
+under this repository's agent guide.
+
 Immediately before execution the stack/template/inventory must still match the
 preflight. Afterwards, two observations verify parameters, stable identities,
 termination protection and retained-state protections. Failure never triggers
@@ -161,14 +172,15 @@ The existing four-target artifact build includes the server-fixed QA dispatcher
 and [QA operator client](../tools/provision_thn_qa.py) only in the owner-mediator
 payload, and the read-only epoch contract in the v2 session payload. Source
 allowlist checks reject QA operator code in v1, v2 session or origin-authorizer
-artifacts. Current CI uses test discovery and those exact allowlists; workflows,
-permissions, environments and infrastructure declarations are unchanged by QA.
+artifacts. Current CI uses test discovery and those exact allowlists. The MFA
+preflight repair adds one pool-scoped read action and the `operator-patch`
+release operation; it adds no new infrastructure resource.
 
 QA provisioning is not a deployment-workflow operation. Use only the same
 reviewed human IAM role and buffered versioned mediator alias, before owner
 onboarding, with `qa-create`, `qa-enable`, `qa-reset` or `qa-disable`. The client
 prompts for private values and accepts no purpose/scope/subject selector. The
-owner CLI and its sole `client-owner` reservation remain unchanged.
+owner CLI keeps its sole `client-owner` reservation.
 
 Complete recovery/reset and fresh human MFA rehearsal before terminal removal.
 `qa-reset` revokes the current epoch first and stays disabled; provider failure
