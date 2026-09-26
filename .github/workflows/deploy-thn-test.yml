@@ -89,7 +89,7 @@ jobs:
         run: |
           set -euo pipefail
           git fetch --no-tags origin refs/heads/dev:refs/remotes/origin/dev
-          read -r commit first_parent second_parent extra < <(git rev-list --parents -n 1 HEAD)
+          read -r _commit _first_parent second_parent extra < <(git rev-list --parents -n 1 HEAD)
           test -n "$second_parent"
           test -z "${extra:-}"
           test "$second_parent" = "$(git rev-parse refs/remotes/origin/dev)"
