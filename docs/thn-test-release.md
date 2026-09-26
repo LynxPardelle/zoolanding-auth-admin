@@ -143,7 +143,13 @@ fix. It requires an active retained-state stack and an exact `dev -> test` merge
 whose changed paths are allowlisted. The composer compares the packaged source
 with the live stack and permits only the mediator `CodeUri` and the exact
 `cognito-idp:GetUserPoolMfaConfig` action on its pool-scoped role. Its change-set
-review permits only the mediator function, role, alias and retained versions.
+review permits only the mediator function, role, alias and retained versions,
+plus the exact indirect references to the mediator's fixed ARN in its URL and
+operator policies. CloudFormation reports those references as conditional
+replacement when the function code changes; the reviewer accepts them only
+when the function itself is a non-replacing update and every reported target,
+cause and evaluation matches the reviewed fixed-ARN pattern. Unexpected
+conditional replacements remain blocked.
 All deployed parameters use `UsePreviousValue`; the operation keeps routes and
 other function packages active. A deployment still requires explicit approval
 under this repository's agent guide.

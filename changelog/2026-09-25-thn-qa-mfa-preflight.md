@@ -1,7 +1,7 @@
 # THN TEST QA MFA preflight repair
 
-Date: 2026-09-25 (Central Time). Implementation and local validation only;
-publication and AWS deployment require separate approval.
+Date: 2026-09-25 (Central Time). The TEST promotion and first deployment
+attempt were explicitly approved; the blocked change set was not executed.
 
 - An authorized QA create rehearsal failed before Cognito creation. Live read-only
   checks confirmed required TOTP through `GetUserPoolMfaConfig`; the operator
@@ -15,6 +15,15 @@ publication and AWS deployment require separate approval.
   live parameter, route, retained resource and other function package. The
   source-delta and change-set gates permit only the reviewed mediator package,
   MFA read permission, alias and retained Lambda versions.
-- Local unit tests and template contracts are the pre-deployment evidence. Live
-  QA creation, enablement, sign-in and TOTP enrollment remain unverified until
-  the reviewed TEST release is approved and applied.
+- The approved first TEST rollout passed CI and source-only validation, then
+  stopped before `ExecuteChangeSet`: CloudFormation reported conditional
+  replacement on the mediator URL and alias resource policy through the
+  function ARN dependency. The stack remained `UPDATE_COMPLETE` with
+  termination protection; both diagnostic change sets were removed without
+  execution.
+- The change-set review now recognizes only those exact indirect fixed-ARN
+  dependencies, including their target properties, causes and dynamic
+  evaluations. It still rejects direct replacement, unrelated resources and
+  changes outside the reviewed mediator package and MFA read action.
+- Live QA creation, enablement, sign-in and TOTP enrollment remain unverified
+  until the repaired TEST release succeeds.

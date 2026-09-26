@@ -300,19 +300,62 @@ def compose_template(candidate: dict, previous: dict, operation: str = "enable")
     return result
 
 
+def _fixed_arn_dependency(change: dict, changes: list[dict]) -> bool:
+    """Recognize only CloudFormation's indirect references to the fixed mediator ARN."""
+    resource = change.get("ResourceChange", {})
+    function = PREFIX + "OwnerOperatorFunction"
+    function_changes = [item.get("ResourceChange", {}) for item in changes if isinstance(item, dict)
+                        and isinstance(item.get("ResourceChange"), dict)
+                        and item["ResourceChange"].get("LogicalResourceId") == function]
+    if (len(function_changes) != 1 or function_changes[0].get("ResourceType") != "AWS::Lambda::Function"
+            or function_changes[0].get("Action") != "Modify"
+            or function_changes[0].get("Replacement") != "False"
+            or resource.get("Action") != "Modify"):
+        return False
+    expected = {
+        PREFIX + "OwnerOperatorAliasPolicy": ("AWS::Lambda::ResourcePolicy", "Conditional", {
+            ("ResourceArn", "Always", function + ".Arn"),
+            ("PolicyDocument", "Never", function + ".Arn")}),
+        PREFIX + "OwnerOperatorFunctionUrl": ("AWS::Lambda::Url", "Conditional", {
+            ("TargetFunctionArn", "Always", function + ".Arn")}),
+        PREFIX + "OwnerOperatorPolicy": ("AWS::IAM::Policy", "False", {
+            ("PolicyDocument", "Never", function + ".Arn")}),
+    }.get(resource.get("LogicalResourceId"))
+    if (not expected or resource.get("ResourceType") != expected[0]
+            or resource.get("Replacement") != expected[1]):
+        return False
+    details = resource.get("Details")
+    if not isinstance(details, list) or len(details) != len(expected[2]):
+        return False
+    observed = set()
+    for detail in details:
+        if not isinstance(detail, dict) or not isinstance(detail.get("Target"), dict):
+            return False
+        target = detail["Target"]
+        if (target.get("Attribute") != "Properties" or detail.get("Evaluation") != "Dynamic"
+                or detail.get("ChangeSource") != "ResourceAttribute"):
+            return False
+        observed.add((target.get("Name"), target.get("RequiresRecreation"), detail.get("CausingEntity")))
+    return observed == expected[2]
+
+
 def review_resources(changes: Any, operation: str) -> None:
     if operation not in OPERATIONS or not isinstance(changes, list):
         raise ReleaseBlocked("change_set_invalid")
     for change in changes:
         resource = change.get("ResourceChange", {}) if isinstance(change, dict) else {}
+        fixed_arn_dependency = (operation == "operator-patch" and isinstance(change, dict)
+                                and isinstance(resource, dict) and _fixed_arn_dependency(change, changes))
         if (not isinstance(change, dict) or change.get("Type") != "Resource" or not isinstance(resource, dict)
                 or not str(resource.get("LogicalResourceId", "")).startswith(PREFIX)
-                or resource.get("Replacement") not in (None, "False")):
+                or (resource.get("Replacement") not in (None, "False") and not fixed_arn_dependency)):
             raise ReleaseBlocked("non_thn_or_replacement_change_forbidden")
         action = resource.get("Action")
         if resource.get("ResourceType") not in STATE_TYPES | PERSISTENT_RUNTIME_TYPES | REMOVABLE_TYPES | {"AWS::Lambda::Version"}:
             raise ReleaseBlocked("resource_type_not_allowlisted")
         if operation == "operator-patch":
+            if fixed_arn_dependency:
+                continue
             logical = resource["LogicalResourceId"]
             kind = resource["ResourceType"]
             allowed = (
@@ -361,6 +404,9 @@ def review_change_set(description: dict, arn: str, name: str, parameters: list[d
     for change in normalized.get("Changes") or []:
         if change["ResourceChange"].get("Action") == "Remove":
             change["ResourceChange"]["Action"] = "Modify"
+        if (operation == "operator-patch" and change["ResourceChange"].get("Replacement") == "Conditional"
+                and _fixed_arn_dependency(change, changes)):
+            change["ResourceChange"]["Replacement"] = "False"
     expected = {p["ParameterKey"]: p["ParameterValue"] for p in parameters if "ParameterValue" in p}
     sensitive = {"ThnAuthAdminV2OriginHeaderSha256Current", "ThnAuthAdminV2OriginHeaderSha256Previous"}
     required = {p["ParameterKey"] for p in parameters}

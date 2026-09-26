@@ -240,6 +240,56 @@ class ThnTestReleaseTests(unittest.TestCase):
             with self.subTest(forbidden=forbidden), self.assertRaises(self.tool.ReleaseBlocked):
                 self.tool.review_resources([forbidden], "operator-patch")
 
+    def test_operator_patch_accepts_exact_fixed_arn_dependency_changes(self):
+        function = PREFIX + "OwnerOperatorFunction"
+        def detail(name, recreation, cause):
+            return {"Target": {"Attribute": "Properties", "Name": name,
+                               "RequiresRecreation": recreation},
+                    "Evaluation": "Dynamic", "ChangeSource": "ResourceAttribute",
+                    "CausingEntity": cause}
+        def change(logical, kind, replacement, details):
+            return {"Type": "Resource", "ResourceChange": {
+                "LogicalResourceId": logical, "ResourceType": kind,
+                "Action": "Modify", "Replacement": replacement, "Details": details}}
+        changes = [
+            change(function, "AWS::Lambda::Function", "False", [
+                {"Target": {"Attribute": "Properties", "Name": "Code", "RequiresRecreation": "Never"},
+                 "Evaluation": "Static", "ChangeSource": "DirectModification"},
+                detail("Role", "Never", PREFIX + "OwnerOperatorFunctionRole.Arn")]),
+            change(PREFIX + "OwnerOperatorFunctionRole", "AWS::IAM::Role", "False", [
+                {"Target": {"Attribute": "Properties", "Name": "Policies", "RequiresRecreation": "Never"},
+                 "Evaluation": "Static", "ChangeSource": "DirectModification"}]),
+            change(PREFIX + "OwnerOperatorAliasPolicy", "AWS::Lambda::ResourcePolicy", "Conditional", [
+                detail("ResourceArn", "Always", function + ".Arn"),
+                detail("PolicyDocument", "Never", function + ".Arn")]),
+            change(PREFIX + "OwnerOperatorFunctionUrl", "AWS::Lambda::Url", "Conditional", [
+                detail("TargetFunctionArn", "Always", function + ".Arn")]),
+            change(PREFIX + "OwnerOperatorPolicy", "AWS::IAM::Policy", "False", [
+                detail("PolicyDocument", "Never", function + ".Arn")]),
+            change(PREFIX + "OwnerOperatorFunctionAliastest", "AWS::Lambda::Alias", "False", [
+                detail("FunctionVersion", "Never", PREFIX + "OwnerOperatorFunctionVersionnew.Version")]),
+            {"Type": "Resource", "ResourceChange": {"LogicalResourceId": function + "Versionnew",
+                "ResourceType": "AWS::Lambda::Version", "Action": "Add"}},
+            {"Type": "Resource", "ResourceChange": {"LogicalResourceId": function + "Versionold",
+                "ResourceType": "AWS::Lambda::Version", "Action": "Remove", "PolicyAction": "Retain"}},
+        ]
+        self.tool.review_resources(changes, "operator-patch")
+        name = "thn-123-1"
+        arn = f"arn:aws:cloudformation:us-east-1:{ACCOUNT}:changeSet/{name}/example"
+        parameters = [{"ParameterKey": "EnvironmentName", "ParameterValue": "test"}]
+        description = {"StackName": "zoolanding-auth-admin-test", "ChangeSetName": name,
+                       "ChangeSetId": arn, "Status": "CREATE_COMPLETE", "ExecutionStatus": "AVAILABLE",
+                       "Parameters": parameters, "Changes": changes}
+        self.assertEqual(self.tool.review_change_set(description, arn, name, parameters, "operator-patch"),
+                         "execute")
+        for field, value in (("ChangeSource", "DirectModification"),
+                             ("Evaluation", "Static"),
+                             ("CausingEntity", PREFIX + "OriginAuthorizerFunction.Arn")):
+            unsafe = deepcopy(changes)
+            unsafe[2]["ResourceChange"]["Details"][0][field] = value
+            with self.subTest(field=field), self.assertRaises(self.tool.ReleaseBlocked):
+                self.tool.review_resources(unsafe, "operator-patch")
+
     def test_enable_cannot_hide_a_code_or_configuration_change(self):
         old, candidate = templates()
         sha = "a" * 40
