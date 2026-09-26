@@ -25,5 +25,10 @@ attempt were explicitly approved; the blocked change set was not executed.
   dependencies, including their target properties, causes and dynamic
   evaluations. It still rejects direct replacement, unrelated resources and
   changes outside the reviewed mediator package and MFA read action.
+- A second, unexecuted preview replaced the dynamic mediator ARN references
+  with a static ARN. CloudFormation then reported definite replacement of the
+  owner mediator URL and alias resource policy. That preview was deleted. The
+  narrower conditional path remains a possible endpoint interruption and is
+  awaiting explicit acceptance of that changed risk before deployment.
 - Live QA creation, enablement, sign-in and TOTP enrollment remain unverified
   until the repaired TEST release succeeds.
