@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import ipaddress
+import json
 import os
 import re
 from collections.abc import Mapping
@@ -37,7 +38,9 @@ def lambda_handler(event: Mapping[str, Any], context: Any) -> dict[str, Any]:
 
     del context
     try:
-        if not _valid_route(event):
+        route_failure = _route_denial_reason(event)
+        if route_failure:
+            _log_denial(route_failure)
             return _deny()
         proof = _single_header(event, _HEADER_NAME)
         viewer_ip = _viewer_ip(event)
@@ -45,20 +48,25 @@ def lambda_handler(event: Mapping[str, Any], context: Any) -> dict[str, Any]:
         forwarded_host = _single_header(event, "x-forwarded-host")
         origin = _single_header(event, "origin")
         identity_source = event.get("identitySource")
-        if (
-            not _PROOF_RE.fullmatch(proof)
-            or not viewer_ip
-            or forwarded_host != _ADMIN_HOST
-            or (method != "GET" and origin != _ADMIN_ORIGIN)
-            or (origin and origin != _ADMIN_ORIGIN)
-            or not isinstance(identity_source, list)
-            or len(identity_source) != 1
-            or identity_source[0] != proof
-        ):
+        if not _PROOF_RE.fullmatch(proof):
+            _log_denial("proof_format")
+            return _deny()
+        if not viewer_ip:
+            _log_denial("viewer_ip")
+            return _deny()
+        if forwarded_host != _ADMIN_HOST:
+            _log_denial("forwarded_host")
+            return _deny()
+        if (method != "GET" and origin != _ADMIN_ORIGIN) or (origin and origin != _ADMIN_ORIGIN):
+            _log_denial("origin")
+            return _deny()
+        if not isinstance(identity_source, list) or len(identity_source) != 1 or identity_source[0] != proof:
+            _log_denial("identity_source")
             return _deny()
         proof_digest = hashlib.sha256(proof.encode("utf-8")).hexdigest()
         configured = _configured_digests()
         if configured is None:
+            _log_denial("digest_configuration")
             return _deny()
         current, previous = configured
         current_matches = hmac.compare_digest(proof_digest, current)
@@ -68,8 +76,9 @@ def lambda_handler(event: Mapping[str, Any], context: Any) -> dict[str, Any]:
                 "isAuthorized": True,
                 "context": {"originVerified": True, "viewerIp": viewer_ip},
             }
+        _log_denial("proof_digest")
     except Exception:
-        pass
+        _log_denial("exception")
     return _deny()
 
 
@@ -88,8 +97,12 @@ def _configured_digests() -> tuple[str, str] | None:
 
 
 def _valid_route(event: Mapping[str, Any]) -> bool:
+    return _route_denial_reason(event) is None
+
+
+def _route_denial_reason(event: Mapping[str, Any]) -> str | None:
     if event.get("version") != "2.0" or event.get("type") != "REQUEST":
-        return False
+        return "payload_version"
     context = event.get("requestContext")
     context = context if isinstance(context, Mapping) else {}
     http = context.get("http")
@@ -97,32 +110,40 @@ def _valid_route(event: Mapping[str, Any]) -> bool:
     method = str(http.get("method") or "").upper()
     path = str(http.get("path") or "")
     route = (method, path)
-    if (
-        context.get("stage") != "test"
-        or route not in _ALLOWED_ROUTES
-        or event.get("routeKey") != f"{method} {path}"
-        or context.get("routeKey") != f"{method} {path}"
-        or event.get("rawPath") != path
-    ):
-        return False
+    if context.get("stage") != "test":
+        return "stage"
+    if route not in _ALLOWED_ROUTES:
+        return "route"
+    if event.get("routeKey") != f"{method} {path}":
+        return "route_key"
+    if context.get("routeKey") != f"{method} {path}":
+        return "context_route_key"
+    if event.get("rawPath") != path:
+        return "raw_path"
     route_arn = str(event.get("routeArn") or "")
     arn_parts = route_arn.split(":", 5)
-    if (
-        len(arn_parts) != 6
-        or arn_parts[0] != "arn"
-        or arn_parts[2] != "execute-api"
-        or context.get("accountId") != arn_parts[4]
-    ):
-        return False
+    if len(arn_parts) != 6 or arn_parts[0] != "arn" or arn_parts[2] != "execute-api":
+        return "route_arn_format"
+    if context.get("accountId") != arn_parts[4]:
+        return "route_arn_account"
     resource_parts = arn_parts[5].split("/", 3)
-    return (
-        len(resource_parts) == 4
-        and bool(resource_parts[0])
-        and context.get("apiId") == resource_parts[0]
-        and resource_parts[1] == "test"
-        and resource_parts[2] == method
-        and f"/{resource_parts[3]}" == path
-    )
+    if len(resource_parts) != 4 or not resource_parts[0]:
+        return "route_arn_resource"
+    if context.get("apiId") != resource_parts[0]:
+        return "route_arn_api"
+    if resource_parts[1] != "test":
+        return "route_arn_stage"
+    if resource_parts[2] != method:
+        return "route_arn_method"
+    if f"/{resource_parts[3]}" != path:
+        return "route_arn_path"
+    return None
+
+
+def _log_denial(reason: str) -> None:
+    """Emit a fixed reason label only; never log the authorizer event or proof."""
+
+    print(json.dumps({"event": "thn_auth_v2_denied", "reason": reason}, separators=(",", ":")))
 
 
 def _viewer_ip(event: Mapping[str, Any]) -> str:

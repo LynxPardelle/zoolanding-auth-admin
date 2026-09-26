@@ -1,7 +1,10 @@
 import hashlib
 import importlib
+import io
+import json
 import os
 import unittest
+from contextlib import redirect_stdout
 from unittest.mock import patch
 
 
@@ -179,6 +182,22 @@ class AuthAdminOriginAuthorizerV2Tests(unittest.TestCase):
             self.invoke(_event(), **duplicated_rotation),
             {"isAuthorized": False, "context": {}},
         )
+
+    def test_denial_diagnostic_identifies_boundary_without_logging_request_data(self):
+        candidate = _event()
+        candidate["rawPath"] = "/test/auth-v2/session/signin"
+        output = io.StringIO()
+
+        with redirect_stdout(output):
+            result = self.invoke(candidate)
+
+        self.assertEqual(result, {"isAuthorized": False, "context": {}})
+        self.assertEqual(json.loads(output.getvalue()), {
+            "event": "thn_auth_v2_denied",
+            "reason": "raw_path",
+        })
+        for private_value in (CURRENT_SECRET, ADMIN_HOST, ADMIN_ORIGIN, "2001:0db8:0:0:0:0:0:1"):
+            self.assertNotIn(private_value, output.getvalue())
 
 
 if __name__ == "__main__":
