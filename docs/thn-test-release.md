@@ -151,9 +151,14 @@ under this repository's agent guide.
 
 `authorizer-patch` is the narrow release for diagnosing an active TEST session
 denial. It requires the same active-state and exact `dev -> test` promotion
-checks. The candidate template must match the live stack except for the
-origin authorizer's packaged `CodeUri`; the change set may modify only that
-Lambda function, without replacement. Denial logs contain fixed reason labels
+checks. A correction to release tooling may follow the authorizer's source-only
+promotion only when that promotion is the immediate preceding TEST merge, both
+merges have the exact reviewed source trees, and every changed path is on the
+authorizer release allowlist. The composer accepts only the known pending `GetUserPoolMfaConfig`
+action difference on the owner operator role, then copies that role from the
+live template. After that normalization, the candidate must match the live
+stack except for the origin authorizer's packaged `CodeUri`; the change set
+may modify only that Lambda function, without replacement. Denial logs contain fixed reason labels
 only, never request headers, account data, IP addresses or the origin proof.
 The operation preserves the other function packages, routes, IAM, parameters
 and retained resources. A later behavior change needs a separate review and

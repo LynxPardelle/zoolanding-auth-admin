@@ -170,12 +170,23 @@ def verify_operator_patch_source_delta(paths: list[str]) -> None:
         raise ReleaseBlocked("operator_patch_source_changed")
 
 
-def verify_authorizer_patch_source_delta(paths: list[str]) -> None:
-    """Keep a diagnostic release limited to the authorizer and its release gates."""
-    if (not isinstance(paths, list) or any(not isinstance(path, str) for path in paths)
+def verify_authorizer_patch_source_delta(paths: list[str], prior_paths: list[str] | None = None) -> None:
+    """Allow an immediate release-tool correction after a reviewed authorizer promotion."""
+    if (not isinstance(paths, list) or not paths
+            or any(not isinstance(path, str) for path in paths)
             or len(paths) != len(set(paths))
-            or "auth_admin_origin_authorizer_v2.py" not in paths
             or any(path not in AUTHORIZER_PATCH_SOURCE_DELTA_FILES for path in paths)):
+        raise ReleaseBlocked("authorizer_patch_source_changed")
+    if "auth_admin_origin_authorizer_v2.py" in paths:
+        if prior_paths is not None:
+            raise ReleaseBlocked("authorizer_patch_source_changed")
+        return
+    if ("tools/thn_test_release.py" not in paths
+            or not isinstance(prior_paths, list) or not prior_paths
+            or any(not isinstance(path, str) for path in prior_paths)
+            or len(prior_paths) != len(set(prior_paths))
+            or "auth_admin_origin_authorizer_v2.py" not in prior_paths
+            or any(path not in AUTHORIZER_PATCH_SOURCE_DELTA_FILES for path in prior_paths)):
         raise ReleaseBlocked("authorizer_patch_source_changed")
 
 
@@ -266,6 +277,26 @@ def prepare_authorizer_patch(candidate: dict, previous: dict, source_sha: str, b
             or parts[4] != source_sha or re.fullmatch(r"[a-f0-9]{32}", parts[5]) is None
             or uri == old_resources[target]["Properties"].get("CodeUri")):
         raise ReleaseBlocked("authorizer_patch_package_invalid")
+    role = PREFIX + "OwnerOperatorFunctionRole"
+    new_role = resources.get(role)
+    old_role = old_resources.get(role)
+    if not isinstance(new_role, dict) or not isinstance(old_role, dict):
+        raise ReleaseBlocked("authorizer_patch_role_invalid")
+    without_action = deepcopy(new_role)
+    statements = [statement
+                  for policy in without_action.get("Properties", {}).get("Policies", [])
+                  for statement in policy.get("PolicyDocument", {}).get("Statement", [])
+                  if statement.get("Sid") == "MutateExactThnOwnerPool"]
+    if len(statements) != 1 or not isinstance(statements[0].get("Action"), list):
+        raise ReleaseBlocked("authorizer_patch_role_invalid")
+    actions = statements[0]["Action"]
+    action = "cognito-idp:GetUserPoolMfaConfig"
+    if actions.count(action) != 1:
+        raise ReleaseBlocked("authorizer_patch_role_invalid")
+    actions.remove(action)
+    if old_role not in (without_action, new_role):
+        raise ReleaseBlocked("authorizer_patch_role_changed")
+    resources[role] = deepcopy(old_role)
     masked = deepcopy(combined)
     masked["Resources"][target]["Properties"]["CodeUri"] = old_resources[target]["Properties"].get("CodeUri")
     if masked != previous:
