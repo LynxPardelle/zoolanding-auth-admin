@@ -1353,7 +1353,10 @@ def _path(event: Mapping[str, Any]) -> str:
     context = context if isinstance(context, Mapping) else {}
     http = context.get("http")
     http = http if isinstance(http, Mapping) else {}
-    return _clean(event.get("rawPath") or event.get("path") or http.get("path")) or "/"
+    path = _clean(event.get("rawPath") or event.get("path") or http.get("path")) or "/"
+    if context.get("stage") == "test" and path.startswith("/test/"):
+        return path.removeprefix("/test")
+    return path
 
 
 def _header(event: Mapping[str, Any], name: str) -> str:

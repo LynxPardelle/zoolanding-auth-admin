@@ -736,6 +736,19 @@ class AuthAdminSessionV2Tests(unittest.TestCase):
         self.assertEqual(store.calls, [])
         self.assertEqual(cognito.calls, [])
 
+    def test_named_test_stage_prefix_reaches_the_session_route(self):
+        event = v2_event("GET", "/auth-v2/session/me")
+        event["requestContext"]["stage"] = "test"
+        event["requestContext"]["http"]["path"] = "/test/auth-v2/session/me"
+        event["rawPath"] = "/test/auth-v2/session/me"
+
+        response, store, cognito = self.run_v2(event)
+
+        self.assertEqual(response["statusCode"], 401)
+        self.assertEqual(response_body(response)["errorCode"], "auth_required")
+        self.assertEqual(store.calls, [])
+        self.assertEqual(cognito.calls, [])
+
     def test_cloudfront_forwarded_host_and_exact_cors_headers_are_supported(self):
         event = v2_event(
             "GET",
