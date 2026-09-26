@@ -247,6 +247,10 @@ class ReleaseExecutionTests(unittest.TestCase):
         session = Session()
         session.cfn.stack = stack(enabled=True, state=True)
         session.cfn.authorizer_patch_changes = True
+        role = PREFIX + "OwnerOperatorFunctionRole"
+        session.cfn.candidate["Resources"][role] = {"Type": "AWS::IAM::Role", "Properties": {"Policies": [
+            {"PolicyDocument": {"Statement": [{"Sid": "MutateExactThnOwnerPool",
+                "Action": ["cognito-idp:GetGroup"]}]}}]}}
         for suffix in ("OwnerOperatorFunction", "OriginAuthorizerFunction", "Function"):
             logical = PREFIX + suffix
             session.cfn.candidate["Resources"][logical] = {"Type": "AWS::Serverless::Function", "Properties": {
@@ -256,6 +260,8 @@ class ReleaseExecutionTests(unittest.TestCase):
         for suffix in ("OwnerOperatorFunction", "OriginAuthorizerFunction", "Function"):
             session.cfn.candidate["Resources"][PREFIX + suffix]["Properties"]["CodeUri"] = (
                 f"s3://example-test-artifacts/zoolanding-auth-admin-test/thn/123/1/{sha}/{'b' * 32}")
+        session.cfn.candidate["Resources"][role]["Properties"]["Policies"][0]["PolicyDocument"]["Statement"][0]["Action"].append(
+            "cognito-idp:GetUserPoolMfaConfig")
         result = self.run_release(session, operation="authorizer-patch")
         self.assertTrue(session.cfn.executed)
         self.assertEqual(result["operation"], "authorizer-patch")
@@ -265,6 +271,7 @@ class ReleaseExecutionTests(unittest.TestCase):
         for suffix in ("OwnerOperatorFunction", "Function"):
             logical = PREFIX + suffix
             self.assertEqual(uploaded["Resources"][logical], session.cfn.template["Resources"][logical])
+        self.assertEqual(uploaded["Resources"][role], session.cfn.template["Resources"][role])
         self.assertEqual(session.cfn.stack["Parameters"], stack(enabled=True, state=True)["Parameters"])
 
 

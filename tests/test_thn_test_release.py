@@ -117,6 +117,16 @@ class ThnTestReleaseTests(unittest.TestCase):
             "auth_admin_origin_authorizer_v2.py", "tools/thn_test_release.py",
             ".github/workflows/deploy-thn-test.yml",
         ])
+        correction = ["tools/thn_test_release.py", "tests/test_thn_test_release.py",
+                      ".github/workflows/deploy-thn-test.yml", "docs/thn-test-release.md"]
+        prior = ["auth_admin_origin_authorizer_v2.py", "tools/thn_test_release.py"]
+        self.tool.verify_authorizer_patch_source_delta(correction, prior)
+        for current, previous in ((correction, None),
+                                  (correction, ["tools/thn_test_release.py"]),
+                                  (correction, prior + ["template.yaml"]),
+                                  (["docs/thn-test-release.md"], prior)):
+            with self.subTest(current=current, previous=previous), self.assertRaises(self.tool.ReleaseBlocked):
+                self.tool.verify_authorizer_patch_source_delta(current, previous)
         for paths in (["tools/thn_test_release.py"],
                       ["auth_admin_origin_authorizer_v2.py", "template.yaml"],
                       ["auth_admin_origin_authorizer_v2.py"] * 2):
@@ -259,6 +269,10 @@ class ThnTestReleaseTests(unittest.TestCase):
         _, old = templates()
         sha = "a" * 40
         bucket = "test-artifacts"
+        role = PREFIX + "OwnerOperatorFunctionRole"
+        old["Resources"][role] = {"Type": "AWS::IAM::Role", "Properties": {"Policies": [
+            {"PolicyDocument": {"Statement": [{"Sid": "MutateExactThnOwnerPool",
+                "Action": ["cognito-idp:GetGroup"]}]}}]}}
         for suffix in ("OwnerOperatorFunction", "OriginAuthorizerFunction", "Function"):
             logical = PREFIX + suffix
             old["Resources"][logical] = {"Type": "AWS::Serverless::Function", "Properties": {
@@ -267,9 +281,12 @@ class ThnTestReleaseTests(unittest.TestCase):
         for suffix in ("OwnerOperatorFunction", "OriginAuthorizerFunction", "Function"):
             candidate["Resources"][PREFIX + suffix]["Properties"]["CodeUri"] = (
                 f"s3://{bucket}/zoolanding-auth-admin-test/thn/200/1/{sha}/{'b' * 32}")
+        candidate["Resources"][role]["Properties"]["Policies"][0]["PolicyDocument"]["Statement"][0]["Action"].append(
+            "cognito-idp:GetUserPoolMfaConfig")
         before = deepcopy(candidate)
         result = self.tool.prepare_authorizer_patch(candidate, old, sha, bucket)
         self.assertEqual(candidate, before)
+        self.assertEqual(result["Resources"][role], old["Resources"][role])
         self.assertEqual(result["Resources"][PREFIX + "OriginAuthorizerFunction"],
                          candidate["Resources"][PREFIX + "OriginAuthorizerFunction"])
         for suffix in ("OwnerOperatorFunction", "Function"):
@@ -280,6 +297,11 @@ class ThnTestReleaseTests(unittest.TestCase):
             self.tool.prepare_authorizer_patch(changed, old, sha, bucket)
         changed = deepcopy(candidate)
         changed["Resources"][PREFIX + "OriginAuthorizerFunction"]["Properties"]["Role"] = "wider"
+        with self.assertRaises(self.tool.ReleaseBlocked):
+            self.tool.prepare_authorizer_patch(changed, old, sha, bucket)
+        changed = deepcopy(candidate)
+        changed["Resources"][role]["Properties"]["Policies"][0]["PolicyDocument"]["Statement"][0]["Action"].append(
+            "cognito-idp:AdminDeleteUser")
         with self.assertRaises(self.tool.ReleaseBlocked):
             self.tool.prepare_authorizer_patch(changed, old, sha, bucket)
 
