@@ -37,7 +37,7 @@ PREFIX = "ThnAuthAdminV2"
 ENABLE = "EnableThnAuthAdminV2"
 STATE = "ProvisionThnAuthAdminV2State"
 GATE = "ThnAuthAdminV2TerminationProtectionGate"
-OPERATIONS = frozenset({"provision", "enable", "disable"})
+OPERATIONS = frozenset({"provision", "enable", "disable", "operator-patch"})
 STATE_TYPES = frozenset({"AWS::DynamoDB::Table", "AWS::Cognito::UserPool",
                          "AWS::Cognito::UserPoolClient", "AWS::Cognito::UserPoolGroup",
                          "AWS::Logs::LogGroup"})
@@ -61,6 +61,20 @@ ENABLE_SOURCE_DELTA_FILES = frozenset({
     "docs/thn-test-release.md",
     "tests/test_thn_release_execution.py",
     "tests/test_thn_test_release.py",
+    "tools/thn_test_release.py",
+})
+OPERATOR_PATCH_SOURCE_DELTA_FILES = frozenset({
+    ".github/workflows/deploy-thn-test.yml",
+    "changelog/2026-09-25-thn-qa-mfa-preflight.md",
+    "changelog/README.md",
+    "docs/thn-test-release.md",
+    "template.yaml",
+    "tests/test_auth_admin_qa_operator_v2.py",
+    "tests/test_auth_admin_v2_template_contract.py",
+    "tests/test_provision_thn_owner.py",
+    "tests/test_thn_release_execution.py",
+    "tests/test_thn_test_release.py",
+    "tools/provision_thn_owner.py",
     "tools/thn_test_release.py",
 })
 
@@ -101,10 +115,14 @@ def lifecycle_parameters(stack: dict, operation: str, raw_selection: str | None)
     previous = _parameters(stack)
     if operation not in OPERATIONS or previous.get("EnvironmentName") != "test":
         raise ReleaseBlocked("operation_invalid")
-    if operation in {"enable", "disable"} and previous.get(STATE) != "true":
+    if operation in {"enable", "disable", "operator-patch"} and previous.get(STATE) != "true":
         raise ReleaseBlocked("retained_state_required")
     if operation == "provision" and previous.get(ENABLE, "false") != "false":
         raise ReleaseBlocked("provision_cannot_disable_runtime")
+    if operation == "operator-patch" and previous.get(ENABLE) != "true":
+        raise ReleaseBlocked("operator_patch_requires_active_runtime")
+    if operation == "operator-patch":
+        return [{"ParameterKey": key, "UsePreviousValue": True} for key in sorted(previous)]
     values = {ENABLE: "false", STATE: "true", GATE: "CONFIRMED_ENABLED"}
     if operation == "enable":
         try:
@@ -132,6 +150,71 @@ def verify_enable_source_delta(paths: list[str]) -> None:
     if (not isinstance(paths, list) or not paths
             or any(not isinstance(path, str) or path not in ENABLE_SOURCE_DELTA_FILES for path in paths)):
         raise ReleaseBlocked("thn_runtime_source_changed")
+
+
+def verify_operator_patch_source_delta(paths: list[str]) -> None:
+    """An active-runtime patch may carry only the reviewed operator fix and release files."""
+    if (not isinstance(paths, list) or any(not isinstance(path, str) for path in paths)
+            or len(paths) != len(set(paths))
+            or not {"tools/provision_thn_owner.py", "template.yaml"}.issubset(paths)
+            or any(path not in OPERATOR_PATCH_SOURCE_DELTA_FILES for path in paths)):
+        raise ReleaseBlocked("operator_patch_source_changed")
+
+
+def prepare_operator_patch(candidate: dict, previous: dict, source_sha: str, bucket: str) -> dict:
+    """Preserve the live stack except the mediator package and its MFA read action."""
+    if (not re.fullmatch(r"[a-f0-9]{40}", source_sha or "")
+            or not re.fullmatch(r"[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]", bucket or "")):
+        raise ReleaseBlocked("operator_patch_source_invalid")
+    combined = compose_template(candidate, previous)
+    resources = combined.get("Resources")
+    if not isinstance(resources, dict) or not isinstance(previous.get("Resources"), dict):
+        raise ReleaseBlocked("operator_patch_template_invalid")
+    operator = PREFIX + "OwnerOperatorFunction"
+    role = PREFIX + "OwnerOperatorFunctionRole"
+    for logical in PROVISIONED_FUNCTIONS:
+        new = resources.get(logical)
+        old = previous["Resources"].get(logical)
+        if (not isinstance(new, dict) or not isinstance(old, dict)
+                or new.get("Type") != "AWS::Serverless::Function"
+                or not isinstance(new.get("Properties"), dict)
+                or not isinstance(old.get("Properties"), dict)):
+            raise ReleaseBlocked("operator_patch_function_invalid")
+        if logical != operator:
+            new["Properties"]["CodeUri"] = old["Properties"].get("CodeUri")
+    uri = resources[operator]["Properties"].get("CodeUri")
+    parsed = urlparse(uri) if isinstance(uri, str) else None
+    parts = parsed.path.lstrip("/").split("/") if parsed else []
+    if (not parsed or parsed.scheme != "s3" or parsed.netloc != bucket
+            or parsed.params or parsed.query or parsed.fragment or len(parts) != 6
+            or parts[:2] != [STACK, "thn"]
+            or any(re.fullmatch(r"[1-9][0-9]*", part) is None for part in parts[2:4])
+            or parts[4] != source_sha or re.fullmatch(r"[a-f0-9]{32}", parts[5]) is None):
+        raise ReleaseBlocked("operator_patch_package_invalid")
+    new_role = resources.get(role)
+    old_role = previous["Resources"].get(role)
+    if not isinstance(new_role, dict) or not isinstance(old_role, dict):
+        raise ReleaseBlocked("operator_patch_role_invalid")
+    without_action = deepcopy(new_role)
+    statements = [statement
+                  for policy in without_action.get("Properties", {}).get("Policies", [])
+                  for statement in policy.get("PolicyDocument", {}).get("Statement", [])
+                  if statement.get("Sid") == "MutateExactThnOwnerPool"]
+    if len(statements) != 1 or not isinstance(statements[0].get("Action"), list):
+        raise ReleaseBlocked("operator_patch_role_invalid")
+    actions = statements[0]["Action"]
+    action = "cognito-idp:GetUserPoolMfaConfig"
+    if actions.count(action) != 1:
+        raise ReleaseBlocked("operator_patch_role_invalid")
+    actions.remove(action)
+    if old_role not in (without_action, new_role):
+        raise ReleaseBlocked("operator_patch_role_changed")
+    masked = deepcopy(combined)
+    masked["Resources"][operator]["Properties"]["CodeUri"] = previous["Resources"][operator]["Properties"].get("CodeUri")
+    masked["Resources"][role] = deepcopy(old_role)
+    if masked != previous:
+        raise ReleaseBlocked("operator_patch_unrelated_change")
+    return combined
 
 
 def preserve_provisioned_code(candidate: dict, previous: dict, source_sha: str, bucket: str) -> dict:
@@ -229,6 +312,20 @@ def review_resources(changes: Any, operation: str) -> None:
         action = resource.get("Action")
         if resource.get("ResourceType") not in STATE_TYPES | PERSISTENT_RUNTIME_TYPES | REMOVABLE_TYPES | {"AWS::Lambda::Version"}:
             raise ReleaseBlocked("resource_type_not_allowlisted")
+        if operation == "operator-patch":
+            logical = resource["LogicalResourceId"]
+            kind = resource["ResourceType"]
+            allowed = (
+                (logical == PREFIX + "OwnerOperatorFunctionRole" and kind == "AWS::IAM::Role" and action == "Modify")
+                or (logical == PREFIX + "OwnerOperatorFunction" and kind == "AWS::Lambda::Function" and action == "Modify")
+                or (logical == PREFIX + "OwnerOperatorFunctionAliastest" and kind == "AWS::Lambda::Alias" and action == "Modify")
+                or (re.fullmatch(rf"{PREFIX}OwnerOperatorFunctionVersion[A-Za-z0-9]+", logical) is not None
+                    and kind == "AWS::Lambda::Version" and
+                    (action == "Add" or (action == "Remove" and resource.get("PolicyAction") == "Retain")))
+            )
+            if not allowed:
+                raise ReleaseBlocked("operator_patch_change_forbidden")
+            continue
         if action in {"Add", "Modify"}:
             continue
         if (action == "Remove" and resource.get("ResourceType") == "AWS::Lambda::Version"
@@ -355,13 +452,14 @@ def run_release(session: Any, env: dict, build: Path, operation: str) -> dict:
     parameters = lifecycle_parameters(before, operation, env.get("THN_V2_TEST_PARAMETERS_JSON"))
     previous = _load_template(cfn.get_template(StackName=STACK, TemplateStage="Original")["TemplateBody"])
     initial_inventory = _inventory(cfn)
-    if operation in {"enable", "disable"}:
+    if operation in {"enable", "disable", "operator-patch"}:
         _verify_retained_state(session, initial_inventory, previous)
     prefix = f"{STACK}/thn/{env['GITHUB_RUN_ID']}/{env['GITHUB_RUN_ATTEMPT']}/{env['GITHUB_SHA']}"
     candidate = previous if operation == "disable" else _package_template(build, env["ARTIFACTS_BUCKET"], prefix)
     if operation == "enable":
         candidate = preserve_provisioned_code(candidate, previous, env["GITHUB_SHA"], env["ARTIFACTS_BUCKET"])
-    template = compose_template(candidate, previous, operation)
+    template = (prepare_operator_patch(candidate, previous, env["GITHUB_SHA"], env["ARTIFACTS_BUCKET"])
+                if operation == "operator-patch" else compose_template(candidate, previous, operation))
     serialized = json.dumps(template, sort_keys=True, separators=(",", ":")).encode()
     key = prefix + "/template-" + hashlib.sha256(serialized).hexdigest() + ".json"
     session.client("s3", region_name=REGION).put_object(Bucket=env["ARTIFACTS_BUCKET"], Key=key,
@@ -409,7 +507,10 @@ def run_release(session: Any, env: dict, build: Path, operation: str) -> dict:
                     raise ReleaseBlocked("deployed_parameter_mismatch")
             inventory = _inventory(cfn)
             for logical, item in initial_inventory.items():
-                if (not logical.startswith(PREFIX) or item["ResourceType"] in STATE_TYPES | PERSISTENT_RUNTIME_TYPES) and inventory.get(logical) != item:
+                must_preserve = (not logical.startswith(PREFIX)
+                    or item["ResourceType"] in STATE_TYPES | PERSISTENT_RUNTIME_TYPES
+                    or (operation == "operator-patch" and item["ResourceType"] != "AWS::Lambda::Version"))
+                if must_preserve and inventory.get(logical) != item:
                     raise ReleaseBlocked("retained_or_legacy_resource_changed")
             if operation in {"provision", "disable"} and any(item["ResourceType"] in {"AWS::ApiGatewayV2::Api", "AWS::Lambda::Url", "AWS::ApiGatewayV2::Route"}
                     for logical, item in inventory.items() if logical.startswith(PREFIX)):

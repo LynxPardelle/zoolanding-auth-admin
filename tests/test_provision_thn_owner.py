@@ -116,7 +116,6 @@ def secure_pool(*, pool_id=USER_POOL_ID, name=None, **overrides):
         "Name": name or "zoolanding-auth-admin-test-ThnAuthAdminV2",
         "AdminCreateUserConfig": {"AllowAdminCreateUserOnly": True},
         "MfaConfiguration": "ON",
-        "EnabledMfas": ["SOFTWARE_TOKEN_MFA"],
         "LambdaConfig": {},
         "AccountRecoverySetting": {
             "RecoveryMechanisms": [{"Priority": 1, "Name": "admin_only"}],
@@ -182,6 +181,7 @@ class RecordingCognitoClient:
         groups=None,
         user_groups=None,
         described_pool=None,
+        mfa_config=None,
         described_client=None,
         provider_error=None,
         users_in_group=None,
@@ -207,6 +207,10 @@ class RecordingCognitoClient:
             user_groups if user_groups is not None else [{"GroupName": "journal-owner"}]
         )
         self.described_pool = described_pool or secure_pool()
+        self.mfa_config = mfa_config if mfa_config is not None else {
+            "MfaConfiguration": "ON",
+            "SoftwareTokenMfaConfiguration": {"Enabled": True},
+        }
         self.described_client = described_client or dedicated_client()
         self.provider_error = provider_error
         self.users_in_group = list(
@@ -235,6 +239,10 @@ class RecordingCognitoClient:
     def describe_user_pool(self, **kwargs):
         self._record("describe_user_pool", kwargs)
         return {"UserPool": self.described_pool}
+
+    def get_user_pool_mfa_config(self, **kwargs):
+        self._record("get_user_pool_mfa_config", kwargs)
+        return self.mfa_config
 
     def list_user_pool_clients(self, **kwargs):
         self._record("list_user_pool_clients", kwargs)
@@ -747,6 +755,22 @@ class ThnOwnerOperatorIdentityTests(unittest.TestCase):
 
 
 class ThnOwnerDiscoveryTests(unittest.TestCase):
+    def test_discovers_totp_from_mfa_api_when_pool_description_omits_enabled_mfas(self):
+        cognito = RecordingCognitoClient(described_pool=secure_pool())
+        try:
+            resources = owner.discover_dedicated_resources(
+                cognito, RecordingCloudFormationClient()
+            )
+        except owner.OwnerProvisioningError:
+            resources = None
+
+        self.assertIsNotNone(resources)
+        self.assertEqual(resources["userPoolId"], USER_POOL_ID)
+        self.assertEqual(
+            calls_for(cognito, "get_user_pool_mfa_config"),
+            [{"UserPoolId": USER_POOL_ID}],
+        )
+
     def test_discovers_one_exact_secure_thn_pool_client_and_owner_group(self):
         cognito = RecordingCognitoClient()
 
@@ -762,6 +786,7 @@ class ThnOwnerDiscoveryTests(unittest.TestCase):
             },
         )
         self.assertEqual(calls_for(cognito, "describe_user_pool"), [{"UserPoolId": USER_POOL_ID}])
+        self.assertEqual(calls_for(cognito, "get_user_pool_mfa_config"), [{"UserPoolId": USER_POOL_ID}])
         self.assertEqual(
             calls_for(cognito, "describe_user_pool_client"),
             [{"UserPoolId": USER_POOL_ID, "ClientId": CLIENT_ID}],
@@ -854,8 +879,6 @@ class ThnOwnerDiscoveryTests(unittest.TestCase):
         insecure_pools = (
             secure_pool(AdminCreateUserConfig={"AllowAdminCreateUserOnly": False}),
             secure_pool(MfaConfiguration="OFF"),
-            secure_pool(EnabledMfas=[]),
-            secure_pool(EnabledMfas=["SMS_MFA", "SOFTWARE_TOKEN_MFA"]),
             secure_pool(LambdaConfig={"PostAuthentication": "legacy-lifecycle-arn"}),
             secure_pool(AccountRecoverySetting={
                 "RecoveryMechanisms": [{"Priority": 1, "Name": "verified_email"}],
@@ -870,6 +893,27 @@ class ThnOwnerDiscoveryTests(unittest.TestCase):
                         cognito,
                         RecordingCloudFormationClient(),
                     )
+
+    def test_mfa_api_must_confirm_required_totp_without_other_factors(self):
+        insecure_configs = (
+            {},
+            {"MfaConfiguration": "OPTIONAL", "SoftwareTokenMfaConfiguration": {"Enabled": True}},
+            {"MfaConfiguration": "ON", "SoftwareTokenMfaConfiguration": {"Enabled": False}},
+            {"MfaConfiguration": "ON", "SoftwareTokenMfaConfiguration": {"Enabled": True},
+             "SmsMfaConfiguration": {"SmsAuthenticationMessage": "code {####}"}},
+            {"MfaConfiguration": "ON", "SoftwareTokenMfaConfiguration": {"Enabled": True},
+             "EmailMfaConfiguration": {"Subject": "code"}},
+        )
+
+        for config in insecure_configs:
+            cognito = RecordingCognitoClient(mfa_config=config)
+            with self.subTest(config=config):
+                with self.assertRaises(owner.OwnerProvisioningError):
+                    owner.discover_dedicated_resources(
+                        cognito,
+                        RecordingCloudFormationClient(),
+                    )
+                self.assertFalse(calls_for(cognito, "describe_user_pool_client"))
 
     def test_client_must_keep_the_five_minute_auth_session_contract(self):
         for value in (None, 4, 6, 99, "5"):

@@ -220,10 +220,21 @@ def discover_dedicated_resources(
             or (pool.get("AdminCreateUserConfig") or {}).get("AllowAdminCreateUserOnly")
             is not True
             or pool.get("MfaConfiguration") != "ON"
-            or set(pool.get("EnabledMfas") or []) != {"SOFTWARE_TOKEN_MFA"}
             or bool(pool.get("LambdaConfig"))
             or (pool.get("AccountRecoverySetting") or {}).get("RecoveryMechanisms")
             != [{"Priority": 1, "Name": "admin_only"}]
+        ):
+            raise OwnerProvisioningError("dedicated THN resources are unavailable")
+
+        mfa = cognito_client.get_user_pool_mfa_config(UserPoolId=pool_id)
+        software_mfa = mfa.get("SoftwareTokenMfaConfiguration") if isinstance(mfa, Mapping) else None
+        if (
+            not isinstance(mfa, Mapping)
+            or mfa.get("MfaConfiguration") != "ON"
+            or not isinstance(software_mfa, Mapping)
+            or software_mfa.get("Enabled") is not True
+            or mfa.get("SmsMfaConfiguration")
+            or mfa.get("EmailMfaConfiguration")
         ):
             raise OwnerProvisioningError("dedicated THN resources are unavailable")
 

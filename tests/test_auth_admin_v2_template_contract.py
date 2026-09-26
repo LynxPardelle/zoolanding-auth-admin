@@ -520,6 +520,7 @@ class AuthAdminV2TemplateContractTests(unittest.TestCase):
                 "cognito-idp:DescribeUserPool",
                 "cognito-idp:DescribeUserPoolClient",
                 "cognito-idp:GetGroup",
+                "cognito-idp:GetUserPoolMfaConfig",
                 "cognito-idp:ListUsersInGroup",
             },
         )

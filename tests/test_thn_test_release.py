@@ -90,6 +90,24 @@ class ThnTestReleaseTests(unittest.TestCase):
         with self.assertRaises(self.tool.ReleaseBlocked):
             self.tool.lifecycle_parameters(stack(enabled=True, state=True), "provision", None)
 
+    def test_operator_patch_keeps_every_live_parameter_and_requires_active_state(self):
+        with self.assertRaises(self.tool.ReleaseBlocked):
+            self.tool.lifecycle_parameters(stack(state=True), "operator-patch", None)
+        result = self.tool.lifecycle_parameters(stack(enabled=True, state=True), "operator-patch", None)
+        self.assertTrue(result)
+        self.assertTrue(all(item == {"ParameterKey": item["ParameterKey"], "UsePreviousValue": True}
+                            for item in result))
+
+    def test_operator_patch_source_delta_is_exactly_allowlisted(self):
+        self.tool.verify_operator_patch_source_delta([
+            "tools/provision_thn_owner.py", "template.yaml", "tools/thn_test_release.py",
+            "tests/test_thn_test_release.py", ".github/workflows/deploy-thn-test.yml",
+        ])
+        for paths in (["template.yaml"],
+                      ["tools/provision_thn_owner.py", "template.yaml", "lambda_function.py"]):
+            with self.subTest(paths=paths), self.assertRaises(self.tool.ReleaseBlocked):
+                self.tool.verify_operator_patch_source_delta(paths)
+
     def test_enable_rejects_hidden_disable_or_state_removal(self):
         for key in ("EnableThnAuthAdminV2", "ProvisionThnAuthAdminV2State"):
             payload = selection()
@@ -164,6 +182,63 @@ class ThnTestReleaseTests(unittest.TestCase):
         ])
         with self.assertRaises(self.tool.ReleaseBlocked):
             self.tool.verify_enable_source_delta(["lambda_function.py"])
+
+    def test_operator_patch_changes_only_mediator_code_and_exact_mfa_read_permission(self):
+        _, old = templates()
+        sha = "a" * 40
+        bucket = "test-artifacts"
+        role = PREFIX + "OwnerOperatorFunctionRole"
+        function = PREFIX + "OwnerOperatorFunction"
+        for suffix in ("OwnerOperatorFunction", "OriginAuthorizerFunction", "Function"):
+            logical = PREFIX + suffix
+            old["Resources"][logical] = {"Type": "AWS::Serverless::Function", "Properties": {
+                "CodeUri": "s3://test-artifacts/old", "Handler": "same.handler"}}
+        old["Resources"][role] = {"Type": "AWS::IAM::Role", "Properties": {"Policies": [
+            {"PolicyDocument": {"Statement": [{"Sid": "MutateExactThnOwnerPool",
+                "Action": ["cognito-idp:GetGroup"]}]}}]}}
+        candidate = deepcopy(old)
+        for suffix in ("OwnerOperatorFunction", "OriginAuthorizerFunction", "Function"):
+            logical = PREFIX + suffix
+            candidate["Resources"][logical]["Properties"]["CodeUri"] = (
+                f"s3://{bucket}/zoolanding-auth-admin-test/thn/200/1/{sha}/{'b' * 32}")
+        candidate["Resources"][role]["Properties"]["Policies"][0]["PolicyDocument"]["Statement"][0]["Action"].append(
+            "cognito-idp:GetUserPoolMfaConfig")
+        before = deepcopy(candidate)
+        result = self.tool.prepare_operator_patch(candidate, old, sha, bucket)
+        self.assertEqual(candidate, before)
+        self.assertEqual(result["Resources"][function], candidate["Resources"][function])
+        self.assertEqual(result["Resources"][role], candidate["Resources"][role])
+        for suffix in ("OriginAuthorizerFunction", "Function"):
+            self.assertEqual(result["Resources"][PREFIX + suffix], old["Resources"][PREFIX + suffix])
+        changed = deepcopy(candidate)
+        changed["Resources"][PREFIX + "Function"]["Properties"]["Handler"] = "changed.handler"
+        with self.assertRaises(self.tool.ReleaseBlocked):
+            self.tool.prepare_operator_patch(changed, old, sha, bucket)
+        changed = deepcopy(candidate)
+        changed["Resources"][role]["Properties"]["Policies"][0]["PolicyDocument"]["Statement"][0]["Action"].append(
+            "cognito-idp:AdminDeleteUser")
+        with self.assertRaises(self.tool.ReleaseBlocked):
+            self.tool.prepare_operator_patch(changed, old, sha, bucket)
+
+    def test_operator_patch_change_set_allows_only_mediator_role_code_alias_and_version(self):
+        def change(logical, kind, action="Modify", policy=None):
+            return {"Type": "Resource", "ResourceChange": {"LogicalResourceId": logical,
+                "ResourceType": kind, "Action": action, "Replacement": "False", "PolicyAction": policy}}
+        allowed = [
+            change(PREFIX + "OwnerOperatorFunctionRole", "AWS::IAM::Role"),
+            change(PREFIX + "OwnerOperatorFunction", "AWS::Lambda::Function"),
+            change(PREFIX + "OwnerOperatorFunctionAliastest", "AWS::Lambda::Alias"),
+            change(PREFIX + "OwnerOperatorFunctionVersionabc123", "AWS::Lambda::Version", "Add"),
+        ]
+        self.tool.review_resources(allowed, "operator-patch")
+        for forbidden in (
+            change(PREFIX + "Function", "AWS::Lambda::Function"),
+            change(PREFIX + "SessionTable", "AWS::DynamoDB::Table"),
+            change(PREFIX + "OwnerOperatorFunctionRole", "AWS::IAM::Role", "Add"),
+            change(PREFIX + "OwnerOperatorFunctionVersionabc123", "AWS::Lambda::Version", "Remove"),
+        ):
+            with self.subTest(forbidden=forbidden), self.assertRaises(self.tool.ReleaseBlocked):
+                self.tool.review_resources([forbidden], "operator-patch")
 
     def test_enable_cannot_hide_a_code_or_configuration_change(self):
         old, candidate = templates()
@@ -314,6 +389,8 @@ class WorkflowBoundaryTests(unittest.TestCase):
         self.assertNotIn("AUTH_ADMIN_CONFIG_JSON_BASE64", workflow)
         self.assertNotIn("check_thn_v2_ordinary_deploy.py", workflow)
         self.assertNotIn("run_test_change_set.sh", workflow)
+        self.assertIn("options: [provision, enable, operator-patch, disable]", workflow)
+        self.assertIn("verify_operator_patch_source_delta", workflow)
         deploy_job = workflow.split("\n  deploy:\n", 1)[1]
         self.assertNotIn("actions/checkout", deploy_job)
         self.assertIn("zoolanding-auth-admin-test-deploy", workflow)
