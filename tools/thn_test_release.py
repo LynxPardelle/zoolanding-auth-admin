@@ -37,7 +37,7 @@ PREFIX = "ThnAuthAdminV2"
 ENABLE = "EnableThnAuthAdminV2"
 STATE = "ProvisionThnAuthAdminV2State"
 GATE = "ThnAuthAdminV2TerminationProtectionGate"
-OPERATIONS = frozenset({"provision", "enable", "disable", "operator-patch"})
+OPERATIONS = frozenset({"provision", "enable", "disable", "operator-patch", "authorizer-patch"})
 STATE_TYPES = frozenset({"AWS::DynamoDB::Table", "AWS::Cognito::UserPool",
                          "AWS::Cognito::UserPoolClient", "AWS::Cognito::UserPoolGroup",
                          "AWS::Logs::LogGroup"})
@@ -75,6 +75,15 @@ OPERATOR_PATCH_SOURCE_DELTA_FILES = frozenset({
     "tests/test_thn_release_execution.py",
     "tests/test_thn_test_release.py",
     "tools/provision_thn_owner.py",
+    "tools/thn_test_release.py",
+})
+AUTHORIZER_PATCH_SOURCE_DELTA_FILES = frozenset({
+    ".github/workflows/deploy-thn-test.yml",
+    "auth_admin_origin_authorizer_v2.py",
+    "docs/thn-test-release.md",
+    "tests/test_auth_admin_origin_authorizer_v2.py",
+    "tests/test_thn_release_execution.py",
+    "tests/test_thn_test_release.py",
     "tools/thn_test_release.py",
 })
 
@@ -115,13 +124,13 @@ def lifecycle_parameters(stack: dict, operation: str, raw_selection: str | None)
     previous = _parameters(stack)
     if operation not in OPERATIONS or previous.get("EnvironmentName") != "test":
         raise ReleaseBlocked("operation_invalid")
-    if operation in {"enable", "disable", "operator-patch"} and previous.get(STATE) != "true":
+    if operation in {"enable", "disable", "operator-patch", "authorizer-patch"} and previous.get(STATE) != "true":
         raise ReleaseBlocked("retained_state_required")
     if operation == "provision" and previous.get(ENABLE, "false") != "false":
         raise ReleaseBlocked("provision_cannot_disable_runtime")
-    if operation == "operator-patch" and previous.get(ENABLE) != "true":
+    if operation in {"operator-patch", "authorizer-patch"} and previous.get(ENABLE) != "true":
         raise ReleaseBlocked("operator_patch_requires_active_runtime")
-    if operation == "operator-patch":
+    if operation in {"operator-patch", "authorizer-patch"}:
         return [{"ParameterKey": key, "UsePreviousValue": True} for key in sorted(previous)]
     values = {ENABLE: "false", STATE: "true", GATE: "CONFIRMED_ENABLED"}
     if operation == "enable":
@@ -159,6 +168,15 @@ def verify_operator_patch_source_delta(paths: list[str]) -> None:
             or not {"tools/provision_thn_owner.py", "template.yaml"}.issubset(paths)
             or any(path not in OPERATOR_PATCH_SOURCE_DELTA_FILES for path in paths)):
         raise ReleaseBlocked("operator_patch_source_changed")
+
+
+def verify_authorizer_patch_source_delta(paths: list[str]) -> None:
+    """Keep a diagnostic release limited to the authorizer and its release gates."""
+    if (not isinstance(paths, list) or any(not isinstance(path, str) for path in paths)
+            or len(paths) != len(set(paths))
+            or "auth_admin_origin_authorizer_v2.py" not in paths
+            or any(path not in AUTHORIZER_PATCH_SOURCE_DELTA_FILES for path in paths)):
+        raise ReleaseBlocked("authorizer_patch_source_changed")
 
 
 def prepare_operator_patch(candidate: dict, previous: dict, source_sha: str, bucket: str) -> dict:
@@ -214,6 +232,44 @@ def prepare_operator_patch(candidate: dict, previous: dict, source_sha: str, buc
     masked["Resources"][role] = deepcopy(old_role)
     if masked != previous:
         raise ReleaseBlocked("operator_patch_unrelated_change")
+    return combined
+
+
+def prepare_authorizer_patch(candidate: dict, previous: dict, source_sha: str, bucket: str) -> dict:
+    """Preserve the exact live stack except the THN origin authorizer package."""
+    if (not re.fullmatch(r"[a-f0-9]{40}", source_sha or "")
+            or not re.fullmatch(r"[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]", bucket or "")):
+        raise ReleaseBlocked("authorizer_patch_source_invalid")
+    combined = compose_template(candidate, previous)
+    resources = combined.get("Resources")
+    old_resources = previous.get("Resources")
+    if not isinstance(resources, dict) or not isinstance(old_resources, dict):
+        raise ReleaseBlocked("authorizer_patch_template_invalid")
+    target = PREFIX + "OriginAuthorizerFunction"
+    for logical in PROVISIONED_FUNCTIONS:
+        new = resources.get(logical)
+        old = old_resources.get(logical)
+        if (not isinstance(new, dict) or not isinstance(old, dict)
+                or new.get("Type") != "AWS::Serverless::Function"
+                or not isinstance(new.get("Properties"), dict)
+                or not isinstance(old.get("Properties"), dict)):
+            raise ReleaseBlocked("authorizer_patch_function_invalid")
+        if logical != target:
+            new["Properties"]["CodeUri"] = old["Properties"].get("CodeUri")
+    uri = resources[target]["Properties"].get("CodeUri")
+    parsed = urlparse(uri) if isinstance(uri, str) else None
+    parts = parsed.path.lstrip("/").split("/") if parsed else []
+    if (not parsed or parsed.scheme != "s3" or parsed.netloc != bucket
+            or parsed.params or parsed.query or parsed.fragment or len(parts) != 6
+            or parts[:2] != [STACK, "thn"]
+            or any(re.fullmatch(r"[1-9][0-9]*", part) is None for part in parts[2:4])
+            or parts[4] != source_sha or re.fullmatch(r"[a-f0-9]{32}", parts[5]) is None
+            or uri == old_resources[target]["Properties"].get("CodeUri")):
+        raise ReleaseBlocked("authorizer_patch_package_invalid")
+    masked = deepcopy(combined)
+    masked["Resources"][target]["Properties"]["CodeUri"] = old_resources[target]["Properties"].get("CodeUri")
+    if masked != previous:
+        raise ReleaseBlocked("authorizer_patch_unrelated_change")
     return combined
 
 
@@ -325,6 +381,12 @@ def review_resources(changes: Any, operation: str) -> None:
             )
             if not allowed:
                 raise ReleaseBlocked("operator_patch_change_forbidden")
+            continue
+        if operation == "authorizer-patch":
+            if (resource["LogicalResourceId"] != PREFIX + "OriginAuthorizerFunction"
+                    or resource["ResourceType"] != "AWS::Lambda::Function"
+                    or action != "Modify"):
+                raise ReleaseBlocked("authorizer_patch_change_forbidden")
             continue
         if action in {"Add", "Modify"}:
             continue
@@ -452,14 +514,18 @@ def run_release(session: Any, env: dict, build: Path, operation: str) -> dict:
     parameters = lifecycle_parameters(before, operation, env.get("THN_V2_TEST_PARAMETERS_JSON"))
     previous = _load_template(cfn.get_template(StackName=STACK, TemplateStage="Original")["TemplateBody"])
     initial_inventory = _inventory(cfn)
-    if operation in {"enable", "disable", "operator-patch"}:
+    if operation in {"enable", "disable", "operator-patch", "authorizer-patch"}:
         _verify_retained_state(session, initial_inventory, previous)
     prefix = f"{STACK}/thn/{env['GITHUB_RUN_ID']}/{env['GITHUB_RUN_ATTEMPT']}/{env['GITHUB_SHA']}"
     candidate = previous if operation == "disable" else _package_template(build, env["ARTIFACTS_BUCKET"], prefix)
     if operation == "enable":
         candidate = preserve_provisioned_code(candidate, previous, env["GITHUB_SHA"], env["ARTIFACTS_BUCKET"])
-    template = (prepare_operator_patch(candidate, previous, env["GITHUB_SHA"], env["ARTIFACTS_BUCKET"])
-                if operation == "operator-patch" else compose_template(candidate, previous, operation))
+    if operation == "operator-patch":
+        template = prepare_operator_patch(candidate, previous, env["GITHUB_SHA"], env["ARTIFACTS_BUCKET"])
+    elif operation == "authorizer-patch":
+        template = prepare_authorizer_patch(candidate, previous, env["GITHUB_SHA"], env["ARTIFACTS_BUCKET"])
+    else:
+        template = compose_template(candidate, previous, operation)
     serialized = json.dumps(template, sort_keys=True, separators=(",", ":")).encode()
     key = prefix + "/template-" + hashlib.sha256(serialized).hexdigest() + ".json"
     session.client("s3", region_name=REGION).put_object(Bucket=env["ARTIFACTS_BUCKET"], Key=key,
@@ -509,7 +575,8 @@ def run_release(session: Any, env: dict, build: Path, operation: str) -> dict:
             for logical, item in initial_inventory.items():
                 must_preserve = (not logical.startswith(PREFIX)
                     or item["ResourceType"] in STATE_TYPES | PERSISTENT_RUNTIME_TYPES
-                    or (operation == "operator-patch" and item["ResourceType"] != "AWS::Lambda::Version"))
+                    or (operation in {"operator-patch", "authorizer-patch"}
+                        and item["ResourceType"] != "AWS::Lambda::Version"))
                 if must_preserve and inventory.get(logical) != item:
                     raise ReleaseBlocked("retained_or_legacy_resource_changed")
             if operation in {"provision", "disable"} and any(item["ResourceType"] in {"AWS::ApiGatewayV2::Api", "AWS::Lambda::Url", "AWS::ApiGatewayV2::Route"}
