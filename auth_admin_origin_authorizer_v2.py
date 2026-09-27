@@ -109,16 +109,18 @@ def _route_denial_reason(event: Mapping[str, Any]) -> str | None:
     http = http if isinstance(http, Mapping) else {}
     method = str(http.get("method") or "").upper()
     path = str(http.get("path") or "")
-    route = (method, path)
+    # The named API Gateway stage remains in the HTTP path behind CloudFront.
+    route_path = path.removeprefix("/test") if path.startswith("/test/") else path
+    route = (method, route_path)
     if context.get("stage") != "test":
         return "stage"
     if route not in _ALLOWED_ROUTES:
         return "route"
-    if event.get("routeKey") != f"{method} {path}":
+    if event.get("routeKey") != f"{method} {route_path}":
         return "route_key"
-    if context.get("routeKey") != f"{method} {path}":
+    if context.get("routeKey") != f"{method} {route_path}":
         return "context_route_key"
-    if event.get("rawPath") != path:
+    if event.get("rawPath") not in (path, route_path):
         return "raw_path"
     route_arn = str(event.get("routeArn") or "")
     arn_parts = route_arn.split(":", 5)
@@ -135,7 +137,7 @@ def _route_denial_reason(event: Mapping[str, Any]) -> str | None:
         return "route_arn_stage"
     if resource_parts[2] != method:
         return "route_arn_method"
-    if f"/{resource_parts[3]}" != path:
+    if f"/{resource_parts[3]}" != route_path:
         return "route_arn_path"
     return None
 

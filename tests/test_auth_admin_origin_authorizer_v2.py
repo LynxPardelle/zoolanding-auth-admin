@@ -125,6 +125,16 @@ class AuthAdminOriginAuthorizerV2Tests(unittest.TestCase):
         wrong_stage["routeArn"] = wrong_stage["routeArn"].replace("/test/", "/prod/")
         self.assertFalse(self.invoke(wrong_stage)["isAuthorized"])
 
+    def test_named_test_stage_prefix_is_accepted_for_an_exact_route(self):
+        event = _event(method="GET", path="/auth-v2/session/me")
+        event["requestContext"]["http"]["path"] = "/test/auth-v2/session/me"
+        event["rawPath"] = "/test/auth-v2/session/me"
+
+        self.assertTrue(self.invoke(event)["isAuthorized"])
+
+        event["rawPath"] = "/auth-v2/session/me"
+        self.assertTrue(self.invoke(event)["isAuthorized"])
+
     def test_viewer_ip_host_origin_and_api_envelope_are_fenced(self):
         invalid_events = []
         for header, value in (

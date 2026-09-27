@@ -95,6 +95,12 @@ Dormant The Hair Narrative TEST-only v2 surface (disabled by default):
 - `GET /auth-v2/session/me`
 - `POST /auth-v2/session/logout`
 
+Behind the dedicated CloudFront origin, API Gateway's named `test` stage can
+appear as `/test` at the start of the HTTP event path. The v2 authorizer and
+session handler remove only that exact stage prefix before matching these six
+routes; the authorizer still requires the `test` stage, exact route keys and
+route ARN, and the private origin proof.
+
 The v2 surface uses isolated tables, a dedicated retained Cognito pool/client,
 namespaced cookies, an exact service-binding registry row, IAM-authorized
 server-side Cognito authentication, mandatory TOTP, and the exact dedicated
