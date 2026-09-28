@@ -863,7 +863,7 @@ class AuthAdminV2TemplateContractTests(unittest.TestCase):
             self.assertNotIn("${ThnAuthAdminV2Api}/*", permission)
 
         handler = HANDLER_PATH.read_text(encoding="utf-8")
-        self.assertIn('ADMIN_HOST = "admin-test.thehairnarrative.com"', handler)
+        self.assertIn('ADMIN_HOST = PROFILE["adminHost"]', handler)
         self.assertIn("_require_admin_origin(event)", handler)
         self.assertIn('"x-forwarded-host"', handler)
         self.assertNotIn('"/auth-v2/runtime-config"', handler)

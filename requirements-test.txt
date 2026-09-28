@@ -1,0 +1,5 @@
+-r requirements.txt
+boto3==1.43.84
+PyYAML==6.0.3
+aws-sam-translator==1.111.0
+tzdata==2026.3

@@ -13,16 +13,23 @@ from collections.abc import Sequence
 REPOSITORY_ROOT = pathlib.Path(__file__).resolve().parents[1]
 SOURCE_ALLOWLIST = {
     "AuthAdminFunction": ("lambda_function.py",),
+    "ThnProductionOwnerOperatorV2Function": (
+        "thn_environment_profile.py", "auth_admin_current_user_v2.py",
+        "auth_admin_production_owner_operator_v2.py", "tools/provision_thn_production_owner.py",
+    ),
     "ThnAuthAdminV2Function": (
+        "thn_environment_profile.py",
         "auth_admin_qa_state_v2.py",
         "auth_admin_current_user_v2.py",
         "auth_admin_session_v2.py",
         "service_binding_registry_consumer_v2.py",
     ),
     "ThnAuthAdminV2OriginAuthorizerFunction": (
+        "thn_environment_profile.py",
         "auth_admin_origin_authorizer_v2.py",
     ),
     "ThnAuthAdminV2OwnerOperatorFunction": (
+        "thn_environment_profile.py",
         "auth_admin_qa_state_v2.py",
         "auth_admin_qa_operator_v2.py",
         "auth_admin_current_user_v2.py",
@@ -33,6 +40,7 @@ SOURCE_ALLOWLIST = {
 }
 RUNTIME_REQUIREMENTS = {
     "AuthAdminFunction": "requirements.txt",
+    "ThnProductionOwnerOperatorV2Function": "requirements-tools.txt",
     "ThnAuthAdminV2Function": "requirements.txt",
     "ThnAuthAdminV2OriginAuthorizerFunction": None,
     "ThnAuthAdminV2OwnerOperatorFunction": "requirements-tools.txt",

@@ -18,6 +18,7 @@ FORBIDDEN_DIRECTORIES = frozenset({".github", "changelog", "docs", "tests", "too
 PROJECT_SOURCE_NAMES = frozenset(
     {
         "lambda_function.py",
+        "thn_environment_profile.py",
         "auth_admin_current_user_v2.py",
         "auth_admin_session_v2.py",
         "auth_admin_origin_authorizer_v2.py",

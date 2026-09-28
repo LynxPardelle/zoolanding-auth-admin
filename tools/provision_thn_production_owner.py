@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Operate the single TEST owner account for The Hair Narrative.
+"""Operate the single production owner account for The Hair Narrative.
 
 This is an operator-only CLI.  It discovers one exact dedicated Cognito pool,
 client, and group, assigns the code-owned ``client-owner`` purpose, and never
@@ -28,8 +28,8 @@ if str(_PROJECT_ROOT) not in sys.path:
 
 from thn_environment_profile import PROFILE
 
-if PROFILE["environment"] != "test":
-    raise RuntimeError("TEST owner operator cannot select another deployment profile")
+if PROFILE["environment"] != "production":
+    raise RuntimeError("production owner operator cannot select another deployment profile")
 
 from auth_admin_current_user_v2 import (
     APPROVED_SCOPE,
@@ -43,17 +43,17 @@ from auth_admin_current_user_v2 import (
 )
 
 
-APPROVED_POOL_NAME = "zoolanding-auth-admin-test-ThnAuthAdminV2"
-APPROVED_CLIENT_NAME = "zoolanding-auth-admin-test-ThnAuthAdminV2Client"
+APPROVED_POOL_NAME = "zoolanding-auth-admin-prod-ThnAuthAdminV2"
+APPROVED_CLIENT_NAME = "zoolanding-auth-admin-prod-ThnAuthAdminV2Client"
 APPROVED_GROUP_NAME = "journal-owner"
-APPROVED_STACK_NAME = "zoolanding-auth-admin-test"
+APPROVED_STACK_NAME = "zoolanding-auth-admin-prod"
 APPROVED_ACCOUNT_PURPOSE = "client-owner"
-APPROVED_AUDIT_TABLE_NAME = "zoolanding-auth-admin-test-ThnAuditV2"
-APPROVED_AUDIT_PARTITION_KEY = "AUDIT#test#thn-journal-test-v2"
+APPROVED_AUDIT_TABLE_NAME = "zoolanding-auth-admin-prod-ThnAuditV2"
+APPROVED_AUDIT_PARTITION_KEY = "AUDIT#production#thn-journal-production-v2"
 APPROVED_AWS_PARTITION = "aws"
 APPROVED_AWS_REGION = "us-east-1"
-APPROVED_MEDIATOR_FUNCTION = "zoolanding-auth-admin-test-ThnOwnerOperatorV2"
-APPROVED_MEDIATOR_QUALIFIER = "test"
+APPROVED_MEDIATOR_FUNCTION = "zoolanding-auth-admin-prod-ThnProductionOwnerOperatorV2"
+APPROVED_MEDIATOR_QUALIFIER = "production"
 APPROVED_MEDIATOR_ALIAS = (
     f"{APPROVED_MEDIATOR_FUNCTION}:{APPROVED_MEDIATOR_QUALIFIER}"
 )
@@ -62,11 +62,11 @@ APPROVED_AWS_ACCOUNT_ID_SHA256 = "3e19eeb25ac142d015c5a4d347dc58784b0a79a124f135
 
 _ROLE_ARN_RE = re.compile(
     r"^arn:(aws):iam::([0-9]{12}):role/"
-    r"(zoolanding-thn-registry-test-operator)$"
+    r"(zoolanding-thn-owner-production-operator)$"
 )
 _ASSUMED_ROLE_ARN_RE = re.compile(
     r"^arn:(aws):sts::([0-9]{12}):assumed-role/"
-    r"(zoolanding-thn-registry-test-operator)/[^/]{1,128}$"
+    r"(zoolanding-thn-owner-production-operator)/[^/]{1,128}$"
 )
 _EMAIL_RE = re.compile(r"^[^\s@]{1,128}@[^\s@]{1,190}$")
 _FUNCTION_URL_RE = re.compile(
