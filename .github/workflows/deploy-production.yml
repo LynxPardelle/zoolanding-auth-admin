@@ -29,6 +29,7 @@ jobs:
           test "$PUSH_FORCED" != "true"
           git fetch --no-tags origin refs/heads/test:refs/remotes/origin/test
           read -r commit first_parent second_parent extra < <(git rev-list --parents -n 1 HEAD)
+          test "$commit" = "$GITHUB_SHA"
           test -n "$first_parent" && test -n "$second_parent" && test -z "${extra:-}"
           test "$first_parent" = "$BEFORE_SHA"
           test "$second_parent" = "$(git rev-parse refs/remotes/origin/test)"
