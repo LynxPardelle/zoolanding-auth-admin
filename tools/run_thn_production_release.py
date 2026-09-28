@@ -108,7 +108,10 @@ def identity_and_permissions(session,source,purpose,native_changes=None,native_t
         release.require(all(isinstance(a,str) and '*' not in a and ':' in a for a in request['actions']))
         # Only the concrete action/resource simulation determines relevant
         # missing context. Whole-policy context keys include unrelated statements.
-        kwargs={'PolicySourceArn':request['principalArn'],'ActionNames':request['actions'],
+        # IAM action names are case insensitive. The live simulator rejects
+        # some mixed-case spellings even under an otherwise identical policy.
+        # Preserve the reviewed request; normalize only the simulation input.
+        kwargs={'PolicySourceArn':request['principalArn'],'ActionNames':[a.lower() for a in request['actions']],
             'ResourceArns':request['resources'],'ContextEntries':request['context']}
         result=iam.simulate_principal_policy(**kwargs)
         evaluations=result.get('EvaluationResults',[])
@@ -117,7 +120,16 @@ def identity_and_permissions(session,source,purpose,native_changes=None,native_t
         for evaluation in evaluations:
             release.require(evaluation.get('EvalDecision')=='allowed' and not evaluation.get('MissingContextValues'),
                 'production_effective_permission_denied')
-            release.require(all(item.get('EvalResourceDecision')=='allowed' for item in evaluation.get('ResourceSpecificResults',[])))
+            release.require(all(item.get('EvalResourceDecision')=='allowed' and not item.get('MissingContextValues') for item in evaluation.get('ResourceSpecificResults',[])))
+        for action in kwargs['ActionNames']:
+            covered=[]
+            for evaluation in evaluations:
+                if evaluation['EvalActionName'].lower()!=action:continue
+                nested=evaluation.get('ResourceSpecificResults',[])
+                if nested:covered.extend(item.get('EvalResourceName') for item in nested)
+                else:covered.append(evaluation.get('EvalResourceName'))
+            release.require(sorted(covered,key=str)==sorted(request['resources']),
+                'production_iam_simulation_resource_coverage_incomplete')
         proofs.append({'request':request,'evaluation':evaluations})
     # Full policy documents stay in memory, are fingerprinted and never emitted.
     def policies(name):

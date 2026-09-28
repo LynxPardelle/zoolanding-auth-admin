@@ -1,0 +1,77 @@
+{
+  "description": "Permissions captured from the AWS::Logs::LogGroup default provider in us-east-1 on 2026-09-28. No account configuration.",
+  "handlers": {
+    "create": {
+      "permissions": [
+        "logs:DescribeLogGroups",
+        "logs:CreateLogGroup",
+        "logs:PutRetentionPolicy",
+        "logs:TagResource",
+        "logs:GetDataProtectionPolicy",
+        "logs:PutDataProtectionPolicy",
+        "logs:CreateLogDelivery",
+        "s3:REST.PUT.OBJECT",
+        "firehose:TagDeliveryStream",
+        "logs:PutResourcePolicy",
+        "logs:DescribeResourcePolicies",
+        "logs:PutIndexPolicy",
+        "logs:DescribeIndexPolicies",
+        "logs:PutBearerTokenAuthentication"
+      ]
+    },
+    "read": {
+      "permissions": [
+        "logs:DescribeLogGroups",
+        "logs:ListTagsForResource",
+        "logs:GetDataProtectionPolicy",
+        "logs:DescribeIndexPolicies",
+        "logs:DescribeResourcePolicies"
+      ]
+    },
+    "update": {
+      "permissions": [
+        "logs:DescribeLogGroups",
+        "logs:AssociateKmsKey",
+        "logs:DisassociateKmsKey",
+        "logs:PutRetentionPolicy",
+        "logs:DeleteRetentionPolicy",
+        "logs:TagResource",
+        "logs:UntagResource",
+        "logs:ListTagsForResource",
+        "logs:GetDataProtectionPolicy",
+        "logs:PutDataProtectionPolicy",
+        "logs:CreateLogDelivery",
+        "s3:REST.PUT.OBJECT",
+        "firehose:TagDeliveryStream",
+        "logs:PutIndexPolicy",
+        "logs:DeleteIndexPolicy",
+        "logs:PutResourcePolicy",
+        "logs:DescribeResourcePolicies",
+        "logs:DeleteResourcePolicy",
+        "logs:PutLogGroupDeletionProtection",
+        "logs:PutBearerTokenAuthentication"
+      ]
+    },
+    "delete": {
+      "permissions": [
+        "logs:DescribeLogGroups",
+        "logs:DeleteLogGroup",
+        "logs:DeleteDataProtectionPolicy"
+      ]
+    },
+    "list": {
+      "permissions": [
+        "logs:DescribeLogGroups",
+        "logs:ListTagsForResource"
+      ],
+      "handlerSchema": {
+        "properties": {
+          "LogGroupName": {
+            "$ref": "resource-schema.json#/properties/LogGroupName"
+          }
+        },
+        "required": []
+      }
+    }
+  }
+}

@@ -98,15 +98,37 @@ class EffectivePermissionDriverTests(unittest.TestCase):
             validate_parameters(kwargs,shape)
             return {'ContextKeyNames':['s3:prefix']}
         iam.get_context_keys_for_principal_policy.side_effect=contexts
-        iam.simulate_principal_policy.side_effect=lambda **kw:{'EvaluationResults':[{'EvalActionName':a,'EvalDecision':'allowed'} for a in kw['ActionNames']]}
+        iam.simulate_principal_policy.side_effect=lambda **kw:{'EvaluationResults':[{'EvalActionName':a,'EvalDecision':'allowed','ResourceSpecificResults':[{'EvalResourceName':r,'EvalResourceDecision':'allowed'} for r in kw['ResourceArns']]} for a in kw['ActionNames']]}
         iam.get_paginator.return_value.paginate.return_value=[]
         session=Mock(region_name='us-east-1');sts=Mock();sts.get_caller_identity.return_value={'Account':account,'Arn':f"arn:aws:sts::{account}:assumed-role/{config['deployRole']}/run"};session.client.side_effect=lambda name:{'iam':iam,'sts':sts}[name]
-        requests=[{'principalArn':caller,'actions':sorted(driver.CALLER_ACTIONS),'resources':['*'],'context':[]},{'principalArn':execution,'actions':['lambda:GetFunction'],'resources':['arn:aws:lambda:us-east-1:765932874577:function:production'],'context':[]}]
+        requests=[{'principalArn':caller,'actions':sorted(driver.CALLER_ACTIONS),'resources':['*'],'context':[]},{'principalArn':execution,'actions':['lambda:GetFunction'],'resources':['arn:aws:lambda:us-east-1:765932874577:function:production','arn:aws:lambda:us-east-1:765932874577:function:production:4'],'context':[]}]
         plan={'schemaVersion':1,'environment':'production','service':config['service'],'purpose':'state','sourceSha':'a'*40,'requests':requests}
         with patch.dict(os.environ,{'THN_PRODUCTION_PERMISSION_PLAN_JSON':json.dumps(plan)}):
             driver.identity_and_permissions(session,{'sourceSha':'a'*40},'state')
         iam.get_context_keys_for_principal_policy.assert_not_called()
         self.assertEqual(iam.simulate_principal_policy.call_count,2)
+        # AWS may return one action summary with nested per-resource decisions.
+        # A missing or duplicated resource must not look like a complete proof.
+        for malformed in ('missing','duplicate','denied','context','resource-context','truncated'):
+            def incomplete(**kwargs):
+                rows=[{'EvalActionName':a,'EvalDecision':'allowed','ResourceSpecificResults':[{'EvalResourceName':r,'EvalResourceDecision':'allowed'} for r in kwargs['ResourceArns']]} for a in kwargs['ActionNames']]
+                result={'EvaluationResults':rows}
+                if malformed=='missing':rows[0]['ResourceSpecificResults']=[]
+                elif malformed=='duplicate':rows[0]['ResourceSpecificResults']*=2
+                elif malformed=='denied':rows[0]['ResourceSpecificResults'][0]['EvalResourceDecision']='explicitDeny'
+                elif malformed=='context':rows[0]['MissingContextValues']=['reviewed-context']
+                elif malformed=='resource-context':rows[0]['ResourceSpecificResults'][0]['MissingContextValues']=['reviewed-context']
+                else:result['IsTruncated']=True
+                return result
+            iam.simulate_principal_policy.side_effect=incomplete
+            with self.subTest(response=malformed),patch.dict(os.environ,{'THN_PRODUCTION_PERMISSION_PLAN_JSON':json.dumps(plan)}):
+                with self.assertRaises(ReleaseError):
+                    driver.identity_and_permissions(session,{'sourceSha':'a'*40},'state')
+        for call,request in zip(iam.simulate_principal_policy.call_args_list[:2],requests):
+            self.assertEqual(call.kwargs['ActionNames'],[a.lower() for a in request['actions']])
+            self.assertEqual(call.kwargs['ResourceArns'],request['resources'])
+            self.assertEqual(call.kwargs['ContextEntries'],request['context'])
+        self.assertEqual(requests[1]['actions'],['lambda:GetFunction'])
     def test_final_authority_recaptures_environment_after_package_reads(self):
         from unittest.mock import Mock,patch
         from tools import run_thn_production_release as driver

@@ -42,8 +42,20 @@ def selected_actions(kind,handlers,changes,template,previous=None):
             excluded=('Metadata','Replication','ObjectLock','Analytics','Inventory','IntelligentTiering','Metrics','Accelerate','ObjectAcl','BucketAcl','Abac')
             required={a for a in required if a.startswith('s3:') and not(any(marker in a.split(':')[1] for marker in excluded) and not a.startswith('s3:Get')) and a!='s3:DeleteObject'}
         elif kind=='AWS::Logs::LogGroup':
-            require(not any(fields.get(k) for k in ('KmsKeyId','DataProtectionPolicy','FieldIndexPolicies','DeliveryDestinationConfiguration')),'production_native_log_feature_not_reviewed')
-            required={a for a in required if a.startswith('logs:')}
+            # Check both templates: clearing an unsupported feature still needs
+            # its removal permissions and must not bypass this closed profile.
+            features=('KmsKeyId','DataProtectionPolicy','FieldIndexPolicies',
+                'DeliveryDestinationConfiguration','ResourcePolicyDocument',
+                'BearerTokenAuthenticationEnabled','DeletionProtectionEnabled')
+            require(not any(p.get(k) for p in (before,after) for k in features)
+                and all(p.get('LogGroupClass')!='DELIVERY' for p in (before,after)),
+                'production_native_log_feature_not_reviewed')
+            conditional={'logs:AssociateKmsKey','logs:DisassociateKmsKey',
+                'logs:PutDataProtectionPolicy','logs:CreateLogDelivery',
+                'logs:PutIndexPolicy','logs:DeleteIndexPolicy',
+                'logs:PutResourcePolicy','logs:DeleteResourcePolicy',
+                'logs:PutBearerTokenAuthentication','logs:PutLogGroupDeletionProtection'}
+            required={a for a in required if a.startswith('logs:') and a not in conditional}
         elif kind.startswith('AWS::Cognito'):
             require(not any(fields.get(k) for k in ('SmsConfiguration','UserPoolAddOns')) and not any(fields.get('LambdaConfig',{}).get(k) for k in ('KMSKeyID','CustomSMSSender','CustomEmailSender')) and fields.get('EmailConfiguration',{}).get('EmailSendingAccount','COGNITO_DEFAULT')=='COGNITO_DEFAULT','production_native_pool_feature_not_reviewed')
             required={a for a in required if a.startswith('cognito-idp:')}
