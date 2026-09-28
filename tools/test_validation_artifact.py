@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from tools.build_lambda_artifact import SOURCE_ALLOWLIST
+from tools.build_lambda_artifact import TEST_SOURCE_ALLOWLIST as SOURCE_ALLOWLIST
 from tools.check_lambda_artifacts import ArtifactValidationError, validate_artifact
 
 SCHEMA = "zoolanding-test-validation/v1"

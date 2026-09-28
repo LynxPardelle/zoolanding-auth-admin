@@ -13,16 +13,23 @@ from collections.abc import Sequence
 REPOSITORY_ROOT = pathlib.Path(__file__).resolve().parents[1]
 SOURCE_ALLOWLIST = {
     "AuthAdminFunction": ("lambda_function.py",),
+    "ThnProductionOwnerOperatorV2Function": (
+        "thn_environment_profile.py", "auth_admin_current_user_v2.py",
+        "auth_admin_production_owner_operator_v2.py", "tools/provision_thn_production_owner.py",
+    ),
     "ThnAuthAdminV2Function": (
+        "thn_environment_profile.py",
         "auth_admin_qa_state_v2.py",
         "auth_admin_current_user_v2.py",
         "auth_admin_session_v2.py",
         "service_binding_registry_consumer_v2.py",
     ),
     "ThnAuthAdminV2OriginAuthorizerFunction": (
+        "thn_environment_profile.py",
         "auth_admin_origin_authorizer_v2.py",
     ),
     "ThnAuthAdminV2OwnerOperatorFunction": (
+        "thn_environment_profile.py",
         "auth_admin_qa_state_v2.py",
         "auth_admin_qa_operator_v2.py",
         "auth_admin_current_user_v2.py",
@@ -31,8 +38,15 @@ SOURCE_ALLOWLIST = {
         "tools/provision_thn_qa.py",
     ),
 }
+# The union is for per-target lookup only; native templates each contain four
+# functions with separate TEST and production owner mediators.
+TEST_SOURCE_ALLOWLIST = {key: value for key, value in SOURCE_ALLOWLIST.items()
+                         if key != "ThnProductionOwnerOperatorV2Function"}
+PRODUCTION_SOURCE_ALLOWLIST = {key: value for key, value in SOURCE_ALLOWLIST.items()
+                               if key != "ThnAuthAdminV2OwnerOperatorFunction"}
 RUNTIME_REQUIREMENTS = {
     "AuthAdminFunction": "requirements.txt",
+    "ThnProductionOwnerOperatorV2Function": "requirements-tools.txt",
     "ThnAuthAdminV2Function": "requirements.txt",
     "ThnAuthAdminV2OriginAuthorizerFunction": None,
     "ThnAuthAdminV2OwnerOperatorFunction": "requirements-tools.txt",
@@ -41,6 +55,14 @@ RUNTIME_REQUIREMENTS = {
 
 class ArtifactBuildError(RuntimeError):
     """The requested artifact cannot be assembled from the exact allowlist."""
+
+
+def source_allowlist_for_environment(environment: str):
+    if environment == "test":
+        return TEST_SOURCE_ALLOWLIST
+    if environment == "production":
+        return PRODUCTION_SOURCE_ALLOWLIST
+    raise ArtifactBuildError("unknown Lambda artifact environment")
 
 
 def build_artifact(

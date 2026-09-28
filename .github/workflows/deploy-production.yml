@@ -5,33 +5,54 @@ on:
     branches: [main]
 
 permissions:
-  id-token: write
   contents: read
 
 jobs:
   guard:
+    outputs:
+      mode: ${{ steps.promotion.outputs.mode }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           fetch-depth: 0
-      - name: Require test merge
+      - name: Require exact source-only TEST promotion
+        id: promotion
         shell: bash
+        env:
+          PRODUCTION_PROMOTION_SELECTION_JSON: ${{ vars.AUTH_PRODUCTION_PROMOTION_SELECTION_JSON }}
+          BEFORE_SHA: ${{ github.event.before }}
+          PUSH_FORCED: ${{ github.event.forced }}
         run: |
           set -euo pipefail
-          git fetch origin test main
-          parent_count="$(git rev-list --parents -n 1 HEAD | awk '{print NF-1}')"
-          if [[ "$parent_count" -lt 2 ]]; then
-            echo "Deploying production requires a merge commit from test."
-            exit 1
-          fi
-          second_parent="$(git rev-list --parents -n 1 HEAD | awk '{print $3}')"
-          git merge-base --is-ancestor "$second_parent" origin/test
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$PUSH_FORCED" != "true"
+          git fetch --no-tags origin refs/heads/test:refs/remotes/origin/test
+          read -r commit first_parent second_parent extra < <(git rev-list --parents -n 1 HEAD)
+          test "$commit" = "$GITHUB_SHA"
+          test -n "$first_parent" && test -n "$second_parent" && test -z "${extra:-}"
+          test "$first_parent" = "$BEFORE_SHA"
+          test "$second_parent" = "$(git rev-parse refs/remotes/origin/test)"
+          PROMOTED_SOURCE_SHA="$second_parent"
+          PROMOTED_SOURCE_TREE="$(git rev-parse 'refs/remotes/origin/test^{tree}')"
+          PROMOTED_TARGET_BASE_SHA="$first_parent"
+          PROMOTED_MERGE_TREE="$(git merge-tree --write-tree "$first_parent" "$second_parent")"
+          test "$PROMOTED_MERGE_TREE" = "$(git rev-parse 'HEAD^{tree}')"
+          export PROMOTED_SOURCE_SHA PROMOTED_SOURCE_TREE PROMOTED_TARGET_BASE_SHA PROMOTED_MERGE_TREE
+          mode="$(python tools/classify_production_promotion.py)"
+          test "$mode" = "thn-source-only"
+          printf 'mode=%s\n' "$mode" >> "$GITHUB_OUTPUT"
+      - name: Validate promoted source without AWS credentials
+        run: python -m unittest discover -s tests -p 'test_classify_production_promotion.py'
 
   deploy:
     runs-on: ubuntu-latest
     needs: guard
+    if: needs.guard.outputs.mode != 'thn-source-only'
     environment: production
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v5
       - name: Set up Python

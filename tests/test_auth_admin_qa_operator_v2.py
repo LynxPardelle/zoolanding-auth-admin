@@ -272,12 +272,17 @@ class QaOperatorTests(unittest.TestCase):
                     self.assertEqual({key for key in self.session.dynamodb.items if key[2].startswith('SUBJECT#')}, before_subjects)
                     self.assertFalse(any(key[2] == current.APPROVED_OWNER_BINDING_SORT_KEY for key in self.session.dynamodb.items))
 
-    def test_owner_cli_and_template_bytes_are_frozen(self):
+    def test_owner_cli_profile_guard_is_only_change_to_frozen_test_owner_logic(self):
         expected = {'tools/provision_thn_owner.py': '86a236ef036b8360dc54a6be2323a912ce8bb0a09151391f6215a47005d8eb91',
                     'template.yaml': '3ab843d718d611811acae9aef051281ab598a28c1442dd2ec01d779b687b8f24'}
         # Normalize git checkout line endings; evidence records exact local bytes separately.
         for path, digest in expected.items():
-            self.assertEqual(hashlib.sha256((ROOT / path).read_bytes().replace(b'\r\n', b'\n')).hexdigest(), digest)
+            source = (ROOT / path).read_bytes().replace(b'\r\n', b'\n')
+            if path == 'tools/provision_thn_owner.py':
+                guard = b'from thn_environment_profile import PROFILE\n\nif PROFILE["environment"] != "test":\n    raise RuntimeError("TEST owner operator cannot select another deployment profile")\n\n'
+                self.assertEqual(source.count(guard), 1)
+                source = source.replace(guard, b'', 1)
+            self.assertEqual(hashlib.sha256(source).hexdigest(), digest)
 
     def test_reset_is_nonterminal_disabled_versioned_and_reenables_only_after_provider_completion(self):
         self.success('qa-create')

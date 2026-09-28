@@ -29,8 +29,7 @@ jobs:
         run: |
           set -euo pipefail
           python -m venv "$RUNNER_TEMP/offline-python"
-          "$RUNNER_TEMP/offline-python/bin/python" -m pip install --disable-pip-version-check boto3==1.43.84 tzdata==2026.3
-          "$RUNNER_TEMP/offline-python/bin/python" -m pip install --disable-pip-version-check -r requirements.txt
+          "$RUNNER_TEMP/offline-python/bin/python" -m pip install --disable-pip-version-check -r requirements-test.txt
           "$RUNNER_TEMP/offline-python/bin/python" -m pip check
       - name: Run the full unit suite with no network or inherited credentials
         shell: bash
