@@ -12,8 +12,10 @@ from copy import deepcopy
 from typing import Any, Mapping, NoReturn
 
 
-APPROVED_TABLE_NAME = "zoolanding-content-hub-test-ServiceBindingRegistryV2"
-APPROVED_PARTITION_KEY = "SERVICE_BINDING#test#thn-journal-test-v2"
+from thn_environment_profile import PROFILE
+
+APPROVED_TABLE_NAME = f"{PROFILE['hubStack']}-ServiceBindingRegistryV2"
+APPROVED_PARTITION_KEY = PROFILE["registryPartitionKey"]
 APPROVED_SORT_KEY = "REGISTRY#V2"
 
 _EXPECTED_DESCRIPTOR_FIELDS = frozenset(
@@ -45,9 +47,9 @@ _RECORD_FIELDS = frozenset(
     }
 )
 _RESERVATION_OWNER = {
-    "environment": "test",
+    "environment": PROFILE["environment"],
     "domain": "thehairnarrative.com",
-    "serviceBindingId": "thn-journal-test-v2",
+    "serviceBindingId": PROFILE["serviceBindingId"],
     "hubId": "thehairnarrative-com-journal",
     "tenantId": "thehairnarrative-com",
     "authProfileId": "journal-owner",
@@ -57,17 +59,17 @@ _FIXED_RECORD_FIELDS = {
     "sk": APPROVED_SORT_KEY,
     "recordType": "service-binding-registry-v2",
     "schemaVersion": 2,
-    "environment": "test",
+    "environment": PROFILE["environment"],
     "domain": "thehairnarrative.com",
-    "serviceBindingId": "thn-journal-test-v2",
+    "serviceBindingId": PROFILE["serviceBindingId"],
     "activationStatus": "active",
     "hubId": "thehairnarrative-com-journal",
     "tenantId": "thehairnarrative-com",
-    "cookieNamespace": "endefiz7dkk635k6di6k",
+    "cookieNamespace": PROFILE["cookieNamespace"],
     "authProfileId": "journal-owner",
-    "adminOrigin": "https://admin-test.thehairnarrative.com",
+    "adminOrigin": PROFILE["adminOrigin"],
 }
-_ALLOWED_WRITER_MODES = frozenset({"disabled", "qa-only", "client-owner"})
+_ALLOWED_WRITER_MODES = frozenset({"disabled", "client-owner"} | ({"qa-only"} if PROFILE["environment"] == "test" else set()))
 _SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
 _ACCOUNT_ID_RE = re.compile(r"^[0-9]{12}$")
@@ -183,11 +185,11 @@ def _expected_resource_bindings(scope: Mapping[str, str]) -> dict[str, str]:
     return {
         "authoringFunctionArn": (
             f"{arn_prefix}:lambda:{location}:function:"
-            "zoolanding-content-hub-test-ThnContentHubV2Authoring"
+            f"{PROFILE['hubStack']}-ThnContentHubV2Authoring"
         ),
         "metadataTableArn": (
             f"{arn_prefix}:dynamodb:{location}:table/"
-            "zoolanding-content-hub-test-ThnContentHubV2Metadata"
+            f"{PROFILE['hubStack']}-ThnContentHubV2Metadata"
         ),
     }
 

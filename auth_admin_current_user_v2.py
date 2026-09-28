@@ -14,16 +14,18 @@ from types import MappingProxyType
 from typing import Any, Mapping, NoReturn
 
 
-APPROVED_TABLE_NAME = "zoolanding-auth-admin-test-ThnCurrentUserStateV2"
-APPROVED_PARTITION_KEY = "CURRENT_USER#test#thn-journal-test-v2"
+from thn_environment_profile import PROFILE
+
+APPROVED_TABLE_NAME = f"{PROFILE['authStack']}-ThnCurrentUserStateV2"
+APPROVED_PARTITION_KEY = PROFILE["currentUserPartitionKey"]
 APPROVED_OWNER_BINDING_SORT_KEY = "OWNER#client-owner"
 APPROVED_SCOPE = MappingProxyType({
-    "environment": "test",
+    "environment": PROFILE["environment"],
     "domain": "thehairnarrative.com",
     "tenantId": "thehairnarrative-com",
     "hubId": "thehairnarrative-com-journal",
     "authProfileId": "journal-owner",
-    "serviceBindingId": "thn-journal-test-v2",
+    "serviceBindingId": PROFILE["serviceBindingId"],
 })
 
 _STATE_FIELDS = frozenset(
@@ -46,7 +48,7 @@ _OWNER_BINDING_FIELDS = frozenset(
     }
 )
 _OWNER_BINDING_STORAGE_FIELDS = _OWNER_BINDING_FIELDS | {"pk", "sk"}
-_ACCOUNT_PURPOSES = frozenset({"qa", "client-owner"})
+_ACCOUNT_PURPOSES = frozenset({"client-owner"} | ({"qa"} if PROFILE["environment"] == "test" else set()))
 _SUBJECT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@+-]{0,127}$")
 _INTEGER_RE = re.compile(r"0|[1-9][0-9]*")
 

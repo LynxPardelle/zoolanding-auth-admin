@@ -30,11 +30,13 @@ from auth_admin_current_user_v2 import (
 import auth_admin_qa_state_v2 as qa_state
 
 
-ENVIRONMENT = "test"
+from thn_environment_profile import PROFILE
+
+ENVIRONMENT = PROFILE["environment"]
 DOMAIN = "thehairnarrative.com"
 AUTH_PROFILE_ID = "journal-owner"
 HUB_ID = "thehairnarrative-com-journal"
-ADMIN_HOST = "admin-test.thehairnarrative.com"
+ADMIN_HOST = PROFILE["adminHost"]
 ADMIN_ORIGIN = f"https://{ADMIN_HOST}"
 
 
@@ -44,7 +46,7 @@ def _cookie_namespace() -> str:
 
 
 COOKIE_NAMESPACE = _cookie_namespace()
-if COOKIE_NAMESPACE != "endefiz7dkk635k6di6k":  # immutable contract guard
+if COOKIE_NAMESPACE != PROFILE["cookieNamespace"]:  # immutable contract guard
     raise RuntimeError("Auth Admin v2 cookie namespace mismatch")
 
 SESSION_COOKIE_NAME = f"__Host-zlp_session_{COOKIE_NAMESPACE}"
@@ -64,9 +66,9 @@ SIGNIN_IP_FAILURE_LIMIT = 10
 CHALLENGE_ACCOUNT_FAILURE_LIMIT = 5
 CHALLENGE_IP_FAILURE_LIMIT = 5
 
-SESSION_TABLE_NAME = "zoolanding-auth-admin-test-ThnSessionV2"
-CHALLENGE_TABLE_NAME = "zoolanding-auth-admin-test-ThnChallengeV2"
-THROTTLE_TABLE_NAME = "zoolanding-auth-admin-test-ThnThrottleV2"
+SESSION_TABLE_NAME = f"{PROFILE['authStack']}-ThnSessionV2"
+CHALLENGE_TABLE_NAME = f"{PROFILE['authStack']}-ThnChallengeV2"
+THROTTLE_TABLE_NAME = f"{PROFILE['authStack']}-ThnThrottleV2"
 
 _SCOPE = deepcopy(dict(APPROVED_SCOPE))
 _ALLOWED_CHALLENGES = frozenset(
@@ -692,7 +694,7 @@ def _new_session_response(
         state = _state_for_subject(subject)
         if (
             state.get("enabled") is not True
-            or state.get("accountPurpose") not in {"qa", "client-owner"}
+            or state.get("accountPurpose") not in ({"qa", "client-owner"} if ENVIRONMENT == "test" else {"client-owner"})
             or type(state.get("sessionVersion")) is not int
             or int(state["sessionVersion"]) < 1
         ):

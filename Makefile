@@ -11,3 +11,6 @@ build-ThnAuthAdminV2OriginAuthorizerFunction:
 
 build-ThnAuthAdminV2OwnerOperatorFunction:
 	python tools/build_lambda_artifact.py ThnAuthAdminV2OwnerOperatorFunction "$(ARTIFACTS_DIR)"
+
+build-ThnProductionOwnerOperatorV2Function:
+	python tools/build_lambda_artifact.py ThnProductionOwnerOperatorV2Function "$(ARTIFACTS_DIR)"

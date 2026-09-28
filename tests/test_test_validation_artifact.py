@@ -11,7 +11,7 @@ import sys
 import tempfile
 import unittest
 
-from tools.build_lambda_artifact import SOURCE_ALLOWLIST
+from tools.build_lambda_artifact import TEST_SOURCE_ALLOWLIST as SOURCE_ALLOWLIST
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -60,6 +60,15 @@ class TestValidationArtifactTests(unittest.TestCase):
         self.assertEqual(set(manifest["files"]), {p.relative_to(self.build).as_posix() for p in self.build.rglob("*") if p.is_file()})
         self.assertFalse((self.build / "release-metadata.json").exists())
         self.assertFalse((self.build / "release-tools").exists())
+
+    def test_test_transport_rejects_production_owner_target(self):
+        from tools.build_lambda_artifact import build_artifact
+        self.assertEqual(len(SOURCE_ALLOWLIST), 4)
+        self.assertNotIn("ThnProductionOwnerOperatorV2Function", SOURCE_ALLOWLIST)
+        build_artifact("ThnProductionOwnerOperatorV2Function",
+                       self.build / "ThnProductionOwnerOperatorV2Function", install_dependencies=False)
+        with self.assertRaises(self.module.ValidationArtifactError):
+            self.create()
 
     def test_transport_rejects_added_removed_and_changed_file(self):
         digest = self.create()

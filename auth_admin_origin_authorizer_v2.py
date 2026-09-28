@@ -19,7 +19,9 @@ _DISABLED_DIGEST = "0" * 64
 _DIGEST_RE = re.compile(r"^[a-f0-9]{64}$")
 # A 32-byte URL-safe base64 value without padding is exactly 43 characters.
 _PROOF_RE = re.compile(r"^[A-Za-z0-9_-]{43}$")
-_ADMIN_HOST = "admin-test.thehairnarrative.com"
+from thn_environment_profile import PROFILE
+
+_ADMIN_HOST = PROFILE["adminHost"]
 _ADMIN_ORIGIN = f"https://{_ADMIN_HOST}"
 _ALLOWED_ROUTES = frozenset(
     {
@@ -110,7 +112,7 @@ def _route_denial_reason(event: Mapping[str, Any]) -> str | None:
     method = str(http.get("method") or "").upper()
     path = str(http.get("path") or "")
     route = (method, path)
-    if context.get("stage") != "test":
+    if context.get("stage") != PROFILE["stage"]:
         return "stage"
     if route not in _ALLOWED_ROUTES:
         return "route"
@@ -131,7 +133,7 @@ def _route_denial_reason(event: Mapping[str, Any]) -> str | None:
         return "route_arn_resource"
     if context.get("apiId") != resource_parts[0]:
         return "route_arn_api"
-    if resource_parts[1] != "test":
+    if resource_parts[1] != PROFILE["stage"]:
         return "route_arn_stage"
     if resource_parts[2] != method:
         return "route_arn_method"
