@@ -1,3 +1,5 @@
+import json
+from pathlib import Path
 import unittest
 from tools.thn_production_native_permissions import selected_actions
 from tools.thn_production_release import ReleaseError
@@ -23,3 +25,32 @@ class NativePermissionProfileTests(unittest.TestCase):
             native={'Resources':{'Owned':{'Properties':fields}}}
             result=selected_actions(kind,{'create':{'permissions':permissions}},[change],native)
             self.assertTrue(all(a.startswith('logs:' if kind.endswith('LogGroup') else 'cognito-idp:') for a in result))
+
+    def test_log_group_lifecycle_keeps_core_permissions_from_live_provider(self):
+        handlers=json.loads((Path(__file__).parent/'fixtures/production_log_group_handler_permissions.json').read_text())['handlers']
+        core_read={'logs:DescribeLogGroups','logs:ListTagsForResource','logs:GetDataProtectionPolicy','logs:DescribeIndexPolicies','logs:DescribeResourcePolicies'}
+        expected={
+            'Add': core_read | {'logs:CreateLogGroup','logs:PutRetentionPolicy','logs:TagResource','logs:DeleteLogGroup','logs:DeleteDataProtectionPolicy'},
+            'Modify': core_read | {'logs:PutRetentionPolicy','logs:DeleteRetentionPolicy','logs:TagResource','logs:UntagResource'},
+            'Remove': core_read | {'logs:DeleteLogGroup','logs:DeleteDataProtectionPolicy'},
+        }
+        template={'Resources':{'Log':{'Properties':{'LogGroupName':'/aws/lambda/exact','RetentionInDays':30}}}}
+        for operation,actions in expected.items():
+            with self.subTest(operation=operation):
+                result=selected_actions('AWS::Logs::LogGroup',handlers,[{'Action':operation,'LogicalResourceId':'Log'}],{} if operation=='Remove' else template,template if operation!='Add' else None)
+                self.assertEqual(result,actions)
+
+    def test_log_group_unreviewed_features_in_old_or_new_template_fail_closed(self):
+        handlers={'read':{'permissions':['logs:DescribeLogGroups']},'update':{'permissions':['logs:PutRetentionPolicy']}}
+        features={'KmsKeyId':'key','DataProtectionPolicy':{'Statement':[{}]},'FieldIndexPolicies':[{}],
+            'DeliveryDestinationConfiguration':{'Arn':'delivery'},'ResourcePolicyDocument':{'Statement':[{}]},
+            'BearerTokenAuthenticationEnabled':True,'DeletionProtectionEnabled':True,'LogGroupClass':'DELIVERY'}
+        for name,value in features.items():
+            for previous in (False,True):
+                with self.subTest(feature=name,previous=previous):
+                    core={'Resources':{'Log':{'Properties':{'LogGroupName':'/aws/lambda/exact'}}}}
+                    feature={'Resources':{'Log':{'Properties':{'LogGroupName':'/aws/lambda/exact',name:value}}}}
+                    # An explicit clear in the new template must not hide an old feature.
+                    cleared={'Resources':{'Log':{'Properties':{'LogGroupName':'/aws/lambda/exact',name:False}}}}
+                    with self.assertRaisesRegex(ReleaseError,'production_native_log_feature_not_reviewed'):
+                        selected_actions('AWS::Logs::LogGroup',handlers,[{'Action':'Modify','LogicalResourceId':'Log'}],cleared if previous else feature,feature if previous else core)
