@@ -1,0 +1,4 @@
+# Public CloudFormation provider schema SHA-256 values, verified against AWS CLI.
+# Only these two historical findings are excluded; credentials remain scanned.
+a1d6dfff62793fb597c26a0f9e4e161158c9302c:tools/production/thn-deployment-identities.json:generic-api-key:30796
+a1d6dfff62793fb597c26a0f9e4e161158c9302c:tools/production/thn-deployment-identities.json:generic-api-key:30798

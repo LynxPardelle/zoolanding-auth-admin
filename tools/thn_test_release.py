@@ -1,0 +1,644 @@
+#!/usr/bin/env python3
+"""Isolated, retained-state THN Auth Admin TEST release boundary.
+
+Shared v1 resources and parameter values are preserved from the deployed stack.
+This is deliberately separate from the ordinary, v2-disabled deploy path.
+"""
+
+from __future__ import annotations
+
+from copy import deepcopy
+import argparse
+import hashlib
+import hmac
+import json
+import os
+from pathlib import Path
+import re
+import sys
+import subprocess
+import tempfile
+import time
+from typing import Any
+from urllib.parse import urlparse
+
+_ROOT = Path(__file__).resolve().parents[1]
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
+from tools.prepare_thn_test_parameters import KEYS, parse_selection
+from tools.prepare_test_parameters import ParameterPreparationError
+from tools import review_test_change_set as ordinary_review
+
+STACK = "zoolanding-auth-admin-test"
+REGION = "us-east-1"
+ACCOUNT_HASH = "3e19eeb25ac142d015c5a4d347dc58784b0a79a124f1353b5e92d90673810a8f"
+PREFIX = "ThnAuthAdminV2"
+ENABLE = "EnableThnAuthAdminV2"
+STATE = "ProvisionThnAuthAdminV2State"
+GATE = "ThnAuthAdminV2TerminationProtectionGate"
+OPERATIONS = frozenset({"provision", "enable", "disable", "operator-patch", "authorizer-patch"})
+STATE_TYPES = frozenset({"AWS::DynamoDB::Table", "AWS::Cognito::UserPool",
+                         "AWS::Cognito::UserPoolClient", "AWS::Cognito::UserPoolGroup",
+                         "AWS::Logs::LogGroup"})
+# Only these stateless types may disappear when the dedicated runtime is disabled.
+PERSISTENT_RUNTIME_TYPES = frozenset({"AWS::Lambda::Function", "AWS::Lambda::Alias",
+                                    "AWS::Lambda::ResourcePolicy", "AWS::IAM::Role"})
+REMOVABLE_TYPES = frozenset({"AWS::Lambda::Permission", "AWS::Lambda::Url",
+    "AWS::IAM::Policy", "AWS::ApiGatewayV2::Api", "AWS::ApiGatewayV2::Stage",
+    "AWS::ApiGatewayV2::Deployment", "AWS::ApiGatewayV2::Integration", "AWS::ApiGatewayV2::Route",
+    "AWS::ApiGatewayV2::Authorizer", "AWS::CloudWatch::Alarm"})
+PROVISIONED_FUNCTIONS = frozenset({
+    PREFIX + "Function", PREFIX + "OriginAuthorizerFunction",
+    PREFIX + "OwnerOperatorFunction",
+})
+PROVISIONED_SOURCE_SHA = "cbc17c8f560c8586be641faa0abc7c60bd17a698"
+ENABLE_SOURCE_DELTA_FILES = frozenset({
+    ".github/workflows/deploy-thn-test.yml",
+    "changelog/2026-09-19-thn-enable-provisioned-code.md",
+    "changelog/2026-09-19-thn-enable-source-transition.md",
+    "changelog/README.md",
+    "docs/thn-test-release.md",
+    "tests/test_thn_release_execution.py",
+    "tests/test_thn_test_release.py",
+    "tools/thn_test_release.py",
+})
+OPERATOR_PATCH_SOURCE_DELTA_FILES = frozenset({
+    ".github/workflows/deploy-thn-test.yml",
+    "changelog/2026-09-25-thn-qa-mfa-preflight.md",
+    "changelog/README.md",
+    "docs/thn-test-release.md",
+    "template.yaml",
+    "tests/test_auth_admin_qa_operator_v2.py",
+    "tests/test_auth_admin_v2_template_contract.py",
+    "tests/test_provision_thn_owner.py",
+    "tests/test_thn_release_execution.py",
+    "tests/test_thn_test_release.py",
+    "tools/provision_thn_owner.py",
+    "tools/thn_test_release.py",
+})
+AUTHORIZER_PATCH_SOURCE_DELTA_FILES = frozenset({
+    ".github/workflows/deploy-thn-test.yml",
+    "auth_admin_origin_authorizer_v2.py",
+    "docs/thn-test-release.md",
+    "tests/test_auth_admin_origin_authorizer_v2.py",
+    "tests/test_thn_release_execution.py",
+    "tests/test_thn_test_release.py",
+    "tools/thn_test_release.py",
+})
+
+
+class ReleaseBlocked(RuntimeError):
+    """A sanitized release-boundary failure; never includes provider inputs."""
+
+
+def _parameters(stack: dict) -> dict[str, str]:
+    result = {}
+    items = stack.get("Parameters")
+    if not isinstance(items, list):
+        raise ReleaseBlocked("stack_parameters_invalid")
+    for item in items:
+        if (not isinstance(item, dict) or not isinstance(item.get("ParameterKey"), str)
+                or not isinstance(item.get("ParameterValue"), str) or item["ParameterKey"] in result):
+            raise ReleaseBlocked("stack_parameters_invalid")
+        result[item["ParameterKey"]] = item["ParameterValue"]
+    return result
+
+
+def validate_stack(stack: Any, account: str, *, expected_account_hash: str = ACCOUNT_HASH) -> None:
+    if (not isinstance(account, str) or not re.fullmatch(r"[0-9]{12}", account)
+            or expected_account_hash == "0" * 64
+            or not hmac.compare_digest(hashlib.sha256(account.encode("ascii")).hexdigest(), expected_account_hash)):
+        raise ReleaseBlocked("test_account_mismatch")
+    expected_arn = rf"arn:aws:cloudformation:{REGION}:{account}:stack/{STACK}/[A-Za-z0-9-]+"
+    if (not isinstance(stack, dict) or stack.get("StackName") != STACK
+            or re.fullmatch(expected_arn, str(stack.get("StackId", ""))) is None
+            or stack.get("StackStatus") not in {"CREATE_COMPLETE", "UPDATE_COMPLETE", "UPDATE_ROLLBACK_COMPLETE"}
+            or stack.get("EnableTerminationProtection") is not True):
+        raise ReleaseBlocked("test_stack_preflight_failed")
+    if _parameters(stack).get("EnvironmentName") != "test":
+        raise ReleaseBlocked("test_environment_mismatch")
+
+
+def lifecycle_parameters(stack: dict, operation: str, raw_selection: str | None) -> list[dict]:
+    previous = _parameters(stack)
+    if operation not in OPERATIONS or previous.get("EnvironmentName") != "test":
+        raise ReleaseBlocked("operation_invalid")
+    if operation in {"enable", "disable", "operator-patch", "authorizer-patch"} and previous.get(STATE) != "true":
+        raise ReleaseBlocked("retained_state_required")
+    if operation == "provision" and previous.get(ENABLE, "false") != "false":
+        raise ReleaseBlocked("provision_cannot_disable_runtime")
+    if operation in {"operator-patch", "authorizer-patch"} and previous.get(ENABLE) != "true":
+        raise ReleaseBlocked("operator_patch_requires_active_runtime")
+    if operation in {"operator-patch", "authorizer-patch"}:
+        return [{"ParameterKey": key, "UsePreviousValue": True} for key in sorted(previous)]
+    values = {ENABLE: "false", STATE: "true", GATE: "CONFIRMED_ENABLED"}
+    if operation == "enable":
+        try:
+            values = parse_selection(raw_selection or "")
+        except ParameterPreparationError:
+            raise ReleaseBlocked("thn_test_selection_invalid") from None
+        if values[ENABLE] != "true" or values[STATE] != "true":
+            raise ReleaseBlocked("enable_selection_required")
+    result = [{"ParameterKey": key, "UsePreviousValue": True}
+              for key in sorted(previous) if key not in values]
+    result.extend({"ParameterKey": key, "ParameterValue": value} for key, value in sorted(values.items()))
+    return result
+
+
+def _thn_key(section: str, key: str) -> bool:
+    if section == "Parameters":
+        return key in KEYS
+    if section == "Conditions":
+        return key.startswith("Is" + PREFIX)
+    return key.startswith(PREFIX)
+
+
+def verify_enable_source_delta(paths: list[str]) -> None:
+    """Permit only reviewed release tooling changes since provisioned source."""
+    if (not isinstance(paths, list) or not paths
+            or any(not isinstance(path, str) or path not in ENABLE_SOURCE_DELTA_FILES for path in paths)):
+        raise ReleaseBlocked("thn_runtime_source_changed")
+
+
+def verify_operator_patch_source_delta(paths: list[str]) -> None:
+    """An active-runtime patch may carry only the reviewed operator fix and release files."""
+    if (not isinstance(paths, list) or any(not isinstance(path, str) for path in paths)
+            or len(paths) != len(set(paths))
+            or not {"tools/provision_thn_owner.py", "template.yaml"}.issubset(paths)
+            or any(path not in OPERATOR_PATCH_SOURCE_DELTA_FILES for path in paths)):
+        raise ReleaseBlocked("operator_patch_source_changed")
+
+
+def verify_authorizer_patch_source_delta(paths: list[str], prior_paths: list[str] | None = None) -> None:
+    """Allow an immediate release-tool correction after a reviewed authorizer promotion."""
+    if (not isinstance(paths, list) or not paths
+            or any(not isinstance(path, str) for path in paths)
+            or len(paths) != len(set(paths))
+            or any(path not in AUTHORIZER_PATCH_SOURCE_DELTA_FILES for path in paths)):
+        raise ReleaseBlocked("authorizer_patch_source_changed")
+    if "auth_admin_origin_authorizer_v2.py" in paths:
+        if prior_paths is not None:
+            raise ReleaseBlocked("authorizer_patch_source_changed")
+        return
+    if ("tools/thn_test_release.py" not in paths
+            or not isinstance(prior_paths, list) or not prior_paths
+            or any(not isinstance(path, str) for path in prior_paths)
+            or len(prior_paths) != len(set(prior_paths))
+            or "auth_admin_origin_authorizer_v2.py" not in prior_paths
+            or any(path not in AUTHORIZER_PATCH_SOURCE_DELTA_FILES for path in prior_paths)):
+        raise ReleaseBlocked("authorizer_patch_source_changed")
+
+
+def prepare_operator_patch(candidate: dict, previous: dict, source_sha: str, bucket: str) -> dict:
+    """Preserve the live stack except the mediator package and its MFA read action."""
+    if (not re.fullmatch(r"[a-f0-9]{40}", source_sha or "")
+            or not re.fullmatch(r"[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]", bucket or "")):
+        raise ReleaseBlocked("operator_patch_source_invalid")
+    combined = compose_template(candidate, previous)
+    resources = combined.get("Resources")
+    if not isinstance(resources, dict) or not isinstance(previous.get("Resources"), dict):
+        raise ReleaseBlocked("operator_patch_template_invalid")
+    operator = PREFIX + "OwnerOperatorFunction"
+    role = PREFIX + "OwnerOperatorFunctionRole"
+    for logical in PROVISIONED_FUNCTIONS:
+        new = resources.get(logical)
+        old = previous["Resources"].get(logical)
+        if (not isinstance(new, dict) or not isinstance(old, dict)
+                or new.get("Type") != "AWS::Serverless::Function"
+                or not isinstance(new.get("Properties"), dict)
+                or not isinstance(old.get("Properties"), dict)):
+            raise ReleaseBlocked("operator_patch_function_invalid")
+        if logical != operator:
+            new["Properties"]["CodeUri"] = old["Properties"].get("CodeUri")
+    uri = resources[operator]["Properties"].get("CodeUri")
+    parsed = urlparse(uri) if isinstance(uri, str) else None
+    parts = parsed.path.lstrip("/").split("/") if parsed else []
+    if (not parsed or parsed.scheme != "s3" or parsed.netloc != bucket
+            or parsed.params or parsed.query or parsed.fragment or len(parts) != 6
+            or parts[:2] != [STACK, "thn"]
+            or any(re.fullmatch(r"[1-9][0-9]*", part) is None for part in parts[2:4])
+            or parts[4] != source_sha or re.fullmatch(r"[a-f0-9]{32}", parts[5]) is None):
+        raise ReleaseBlocked("operator_patch_package_invalid")
+    new_role = resources.get(role)
+    old_role = previous["Resources"].get(role)
+    if not isinstance(new_role, dict) or not isinstance(old_role, dict):
+        raise ReleaseBlocked("operator_patch_role_invalid")
+    without_action = deepcopy(new_role)
+    statements = [statement
+                  for policy in without_action.get("Properties", {}).get("Policies", [])
+                  for statement in policy.get("PolicyDocument", {}).get("Statement", [])
+                  if statement.get("Sid") == "MutateExactThnOwnerPool"]
+    if len(statements) != 1 or not isinstance(statements[0].get("Action"), list):
+        raise ReleaseBlocked("operator_patch_role_invalid")
+    actions = statements[0]["Action"]
+    action = "cognito-idp:GetUserPoolMfaConfig"
+    if actions.count(action) != 1:
+        raise ReleaseBlocked("operator_patch_role_invalid")
+    actions.remove(action)
+    if old_role not in (without_action, new_role):
+        raise ReleaseBlocked("operator_patch_role_changed")
+    masked = deepcopy(combined)
+    masked["Resources"][operator]["Properties"]["CodeUri"] = previous["Resources"][operator]["Properties"].get("CodeUri")
+    masked["Resources"][role] = deepcopy(old_role)
+    if masked != previous:
+        raise ReleaseBlocked("operator_patch_unrelated_change")
+    return combined
+
+
+def prepare_authorizer_patch(candidate: dict, previous: dict, source_sha: str, bucket: str) -> dict:
+    """Preserve the exact live stack except the THN origin authorizer package."""
+    if (not re.fullmatch(r"[a-f0-9]{40}", source_sha or "")
+            or not re.fullmatch(r"[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]", bucket or "")):
+        raise ReleaseBlocked("authorizer_patch_source_invalid")
+    combined = compose_template(candidate, previous)
+    resources = combined.get("Resources")
+    old_resources = previous.get("Resources")
+    if not isinstance(resources, dict) or not isinstance(old_resources, dict):
+        raise ReleaseBlocked("authorizer_patch_template_invalid")
+    target = PREFIX + "OriginAuthorizerFunction"
+    for logical in PROVISIONED_FUNCTIONS:
+        new = resources.get(logical)
+        old = old_resources.get(logical)
+        if (not isinstance(new, dict) or not isinstance(old, dict)
+                or new.get("Type") != "AWS::Serverless::Function"
+                or not isinstance(new.get("Properties"), dict)
+                or not isinstance(old.get("Properties"), dict)):
+            raise ReleaseBlocked("authorizer_patch_function_invalid")
+        if logical != target:
+            new["Properties"]["CodeUri"] = old["Properties"].get("CodeUri")
+    uri = resources[target]["Properties"].get("CodeUri")
+    parsed = urlparse(uri) if isinstance(uri, str) else None
+    parts = parsed.path.lstrip("/").split("/") if parsed else []
+    if (not parsed or parsed.scheme != "s3" or parsed.netloc != bucket
+            or parsed.params or parsed.query or parsed.fragment or len(parts) != 6
+            or parts[:2] != [STACK, "thn"]
+            or any(re.fullmatch(r"[1-9][0-9]*", part) is None for part in parts[2:4])
+            or parts[4] != source_sha or re.fullmatch(r"[a-f0-9]{32}", parts[5]) is None
+            or uri == old_resources[target]["Properties"].get("CodeUri")):
+        raise ReleaseBlocked("authorizer_patch_package_invalid")
+    role = PREFIX + "OwnerOperatorFunctionRole"
+    new_role = resources.get(role)
+    old_role = old_resources.get(role)
+    if not isinstance(new_role, dict) or not isinstance(old_role, dict):
+        raise ReleaseBlocked("authorizer_patch_role_invalid")
+    without_action = deepcopy(new_role)
+    statements = [statement
+                  for policy in without_action.get("Properties", {}).get("Policies", [])
+                  for statement in policy.get("PolicyDocument", {}).get("Statement", [])
+                  if statement.get("Sid") == "MutateExactThnOwnerPool"]
+    if len(statements) != 1 or not isinstance(statements[0].get("Action"), list):
+        raise ReleaseBlocked("authorizer_patch_role_invalid")
+    actions = statements[0]["Action"]
+    action = "cognito-idp:GetUserPoolMfaConfig"
+    if actions.count(action) != 1:
+        raise ReleaseBlocked("authorizer_patch_role_invalid")
+    actions.remove(action)
+    if old_role not in (without_action, new_role):
+        raise ReleaseBlocked("authorizer_patch_role_changed")
+    resources[role] = deepcopy(old_role)
+    masked = deepcopy(combined)
+    masked["Resources"][target]["Properties"]["CodeUri"] = old_resources[target]["Properties"].get("CodeUri")
+    if masked != previous:
+        raise ReleaseBlocked("authorizer_patch_unrelated_change")
+    return combined
+
+
+def preserve_provisioned_code(candidate: dict, previous: dict, source_sha: str, bucket: str) -> dict:
+    """Enable the already-provisioned code without repackaging it into an update.
+
+    The release build is still validated. A separate reviewed release is needed
+    when code or any function property actually changes.
+    """
+    if (not re.fullmatch(r"[a-f0-9]{40}", source_sha or "")
+            or not re.fullmatch(r"[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]", bucket or "")
+            or not isinstance(candidate, dict) or not isinstance(previous, dict)):
+        raise ReleaseBlocked("provisioned_code_source_invalid")
+    result = deepcopy(candidate)
+    old_resources, new_resources = previous.get("Resources"), result.get("Resources")
+    if not isinstance(old_resources, dict) or not isinstance(new_resources, dict):
+        raise ReleaseBlocked("provisioned_code_resources_invalid")
+    actual_functions = {key for key, value in old_resources.items()
+                        if key.startswith(PREFIX) and isinstance(value, dict)
+                        and value.get("Type") == "AWS::Serverless::Function"}
+    if actual_functions != PROVISIONED_FUNCTIONS:
+        raise ReleaseBlocked("provisioned_code_inventory_changed")
+
+    def pinned(uri: Any, expected_sha: str) -> bool:
+        if not isinstance(uri, str):
+            return False
+        parsed = urlparse(uri)
+        parts = parsed.path.lstrip("/").split("/")
+        return (parsed.scheme == "s3" and parsed.netloc == bucket
+                and not parsed.params and not parsed.query and not parsed.fragment
+                and len(parts) == 6 and parts[0:2] == [STACK, "thn"]
+                and all(re.fullmatch(r"[1-9][0-9]*", part) for part in parts[2:4])
+                and parts[4] == expected_sha and bool(re.fullmatch(r"[a-f0-9]{32}", parts[5])))
+
+    for logical in sorted(PROVISIONED_FUNCTIONS):
+        old, new = old_resources[logical], new_resources.get(logical)
+        if not isinstance(new, dict) or new.get("Type") != "AWS::Serverless::Function":
+            raise ReleaseBlocked("provisioned_code_resource_changed")
+        old_properties, new_properties = old.get("Properties"), new.get("Properties")
+        if not isinstance(old_properties, dict) or not isinstance(new_properties, dict):
+            raise ReleaseBlocked("provisioned_code_properties_invalid")
+        if (not pinned(old_properties.get("CodeUri"), PROVISIONED_SOURCE_SHA)
+                or not pinned(new_properties.get("CodeUri"), source_sha)):
+            raise ReleaseBlocked("provisioned_code_source_changed")
+        with_old_code = deepcopy(new)
+        with_old_code["Properties"]["CodeUri"] = old_properties["CodeUri"]
+        if with_old_code != old:
+            raise ReleaseBlocked("provisioned_code_properties_changed")
+        new_resources[logical] = deepcopy(old)
+    return result
+
+
+def compose_template(candidate: dict, previous: dict, operation: str = "enable") -> dict:
+    """Keep v1 byte-equivalent while installing only reviewed, prefixed v2 entries."""
+    if operation not in OPERATIONS or not isinstance(candidate, dict) or not isinstance(previous, dict):
+        raise ReleaseBlocked("template_invalid")
+    if operation == "disable":
+        return deepcopy(previous)
+    for key in ("Transform", "Globals", "Mappings"):
+        if candidate.get(key) != previous.get(key):
+            raise ReleaseBlocked("shared_template_drift")
+    result = deepcopy(previous)
+    for section in ("Resources", "Parameters", "Conditions", "Rules", "Outputs", "Metadata"):
+        supplied = candidate.get(section, {})
+        current = previous.get(section, {})
+        if not isinstance(supplied, dict) or not isinstance(current, dict):
+            raise ReleaseBlocked("template_invalid")
+        # A retained resource cannot disappear even from the source template.
+        for key, value in current.items():
+            if (section == "Resources" and _thn_key(section, key)
+                    and value.get("Type") in STATE_TYPES and key not in supplied):
+                raise ReleaseBlocked("retained_resource_missing")
+        combined = {key: deepcopy(value) for key, value in current.items() if not _thn_key(section, key)}
+        for key, value in supplied.items():
+            if not _thn_key(section, key):
+                continue
+            if section == "Resources" and value.get("Type") in STATE_TYPES:
+                if (value.get("DeletionPolicy") != "Retain" or value.get("UpdateReplacePolicy") != "Retain"
+                        or value.get("Condition") != "IsThnAuthAdminV2StateProvisioned"):
+                    raise ReleaseBlocked("state_retention_required")
+            combined[key] = deepcopy(value)
+        if combined:
+            result[section] = combined
+    return result
+
+
+def review_resources(changes: Any, operation: str) -> None:
+    if operation not in OPERATIONS or not isinstance(changes, list):
+        raise ReleaseBlocked("change_set_invalid")
+    for change in changes:
+        resource = change.get("ResourceChange", {}) if isinstance(change, dict) else {}
+        if (not isinstance(change, dict) or change.get("Type") != "Resource" or not isinstance(resource, dict)
+                or not str(resource.get("LogicalResourceId", "")).startswith(PREFIX)
+                or resource.get("Replacement") not in (None, "False")):
+            raise ReleaseBlocked("non_thn_or_replacement_change_forbidden")
+        action = resource.get("Action")
+        if resource.get("ResourceType") not in STATE_TYPES | PERSISTENT_RUNTIME_TYPES | REMOVABLE_TYPES | {"AWS::Lambda::Version"}:
+            raise ReleaseBlocked("resource_type_not_allowlisted")
+        if operation == "operator-patch":
+            logical = resource["LogicalResourceId"]
+            kind = resource["ResourceType"]
+            allowed = (
+                (logical == PREFIX + "OwnerOperatorFunctionRole" and kind == "AWS::IAM::Role" and action == "Modify")
+                or (logical == PREFIX + "OwnerOperatorFunction" and kind == "AWS::Lambda::Function" and action == "Modify")
+                or (logical == PREFIX + "OwnerOperatorFunctionAliastest" and kind == "AWS::Lambda::Alias" and action == "Modify")
+                or (re.fullmatch(rf"{PREFIX}OwnerOperatorFunctionVersion[A-Za-z0-9]+", logical) is not None
+                    and kind == "AWS::Lambda::Version" and
+                    (action == "Add" or (action == "Remove" and resource.get("PolicyAction") == "Retain")))
+            )
+            if not allowed:
+                raise ReleaseBlocked("operator_patch_change_forbidden")
+            continue
+        if operation == "authorizer-patch":
+            if (resource["LogicalResourceId"] != PREFIX + "OriginAuthorizerFunction"
+                    or resource["ResourceType"] != "AWS::Lambda::Function"
+                    or action != "Modify"):
+                raise ReleaseBlocked("authorizer_patch_change_forbidden")
+            continue
+        if action in {"Add", "Modify"}:
+            continue
+        if (action == "Remove" and resource.get("ResourceType") == "AWS::Lambda::Version"
+                and resource.get("PolicyAction") == "Retain"):
+            continue
+        if (action == "Remove" and operation == "disable"
+                and resource.get("ResourceType") in REMOVABLE_TYPES):
+            continue
+        raise ReleaseBlocked("resource_removal_forbidden")
+
+
+def validate_context(env: dict) -> None:
+    if (env.get("GITHUB_REPOSITORY") != "LynxPardelle/zoolanding-auth-admin"
+            or env.get("GITHUB_REF") != "refs/heads/test"
+            or env.get("GITHUB_EVENT_NAME") != "workflow_dispatch"
+            or not re.fullmatch(r"[a-f0-9]{40}", env.get("GITHUB_SHA", ""))
+            or env.get("EXPECTED_SOURCE_SHA") != env.get("GITHUB_SHA")
+            or any(not re.fullmatch(r"[1-9][0-9]*", env.get(key, "")) for key in ("GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT"))
+            or any(env.get(key) != REGION for key in ("AWS_REGION", "AWS_DEFAULT_REGION"))):
+        raise ReleaseBlocked("test_release_context_invalid")
+
+
+def review_change_set(description: dict, arn: str, name: str, parameters: list[dict], operation: str) -> str:
+    """Reuse the ordinary identity checks without relaxing its deletion policy."""
+    if (not isinstance(description, dict) or description.get("NextToken")
+            or not re.fullmatch(rf"arn:aws:cloudformation:{REGION}:[0-9]{{12}}:changeSet/{re.escape(name)}/[A-Za-z0-9-]+", arn)):
+        raise ReleaseBlocked("change_set_identity_invalid")
+    changes = description.get("Changes") or []
+    review_resources(changes, operation)
+    # Ordinary review sees already-checked removal entries as non-replacing updates.
+    # Its shared identity, status and parameter validation remains untouched.
+    normalized = deepcopy(description)
+    for change in normalized.get("Changes") or []:
+        if change["ResourceChange"].get("Action") == "Remove":
+            change["ResourceChange"]["Action"] = "Modify"
+    expected = {p["ParameterKey"]: p["ParameterValue"] for p in parameters if "ParameterValue" in p}
+    sensitive = {"ThnAuthAdminV2OriginHeaderSha256Current", "ThnAuthAdminV2OriginHeaderSha256Previous"}
+    required = {p["ParameterKey"] for p in parameters}
+    expected = {k: v for k, v in expected.items() if k not in sensitive}
+    try:
+        actual = ordinary_review._parameter_map(description.get("Parameters"))
+        if not required.issubset(actual):
+            raise ReleaseBlocked("change_set_parameters_missing")
+        return ordinary_review.review_change_set(normalized, expected_stack_name=STACK,
+            expected_change_set_name=name, expected_change_set_arn=arn, expected_change_set_type="UPDATE",
+            expected_parameters=expected, required_parameters=required)
+    except ordinary_review.ChangeSetReviewError:
+        raise ReleaseBlocked("change_set_review_failed") from None
+
+
+def _load_template(body: Any) -> dict:
+    if isinstance(body, dict):
+        return deepcopy(body)
+    import yaml
+    try:
+        result = yaml.safe_load(body)
+    except (yaml.YAMLError, TypeError):
+        raise ReleaseBlocked("template_decode_failed") from None
+    if not isinstance(result, dict):
+        raise ReleaseBlocked("template_decode_failed")
+    return result
+
+
+def _inventory(cfn: Any) -> dict[str, dict]:
+    result = {}
+    token = None
+    while True:
+        page = cfn.list_stack_resources(StackName=STACK, **({"NextToken": token} if token else {}))
+        for item in page.get("StackResourceSummaries", []):
+            if item.get("ResourceStatus") == "DELETE_COMPLETE":
+                continue
+            key = item.get("LogicalResourceId")
+            if not isinstance(key, str) or key in result or not item.get("PhysicalResourceId"):
+                raise ReleaseBlocked("resource_inventory_invalid")
+            result[key] = {k: item.get(k) for k in ("PhysicalResourceId", "ResourceType")}
+        token = page.get("NextToken")
+        if not token:
+            return result
+
+
+def _package_template(build: Path, bucket: str, prefix: str) -> dict:
+    with tempfile.TemporaryDirectory(prefix="thn-package-") as temporary:
+        destination = Path(temporary) / "packaged.yaml"
+        result = subprocess.run(["sam", "package", "--template-file", str(build / "template.yaml"),
+            "--s3-bucket", bucket, "--s3-prefix", prefix, "--region", REGION,
+            "--output-template-file", str(destination)], capture_output=True, text=True, check=False)
+        if result.returncode:
+            raise ReleaseBlocked("artifact_packaging_failed")
+        return _load_template(destination.read_text(encoding="utf-8"))
+
+
+def _verify_retained_state(session: Any, inventory: dict, template: dict) -> None:
+    for logical, resource in template.get("Resources", {}).items():
+        if not logical.startswith(PREFIX) or resource.get("Type") not in STATE_TYPES:
+            continue
+        item = inventory.get(logical)
+        if not item or item["ResourceType"] != resource["Type"]:
+            raise ReleaseBlocked("retained_state_inventory_mismatch")
+        resource_type = item["ResourceType"]
+        physical = item["PhysicalResourceId"]
+        if resource_type == "AWS::DynamoDB::Table":
+            client = session.client("dynamodb", region_name=REGION)
+            table = client.describe_table(TableName=physical)["Table"]
+            backup = client.describe_continuous_backups(TableName=physical)["ContinuousBackupsDescription"]
+            if (table.get("TableStatus") != "ACTIVE" or table.get("DeletionProtectionEnabled") is not True
+                    or table.get("SSEDescription", {}).get("Status") != "ENABLED"
+                    or backup.get("PointInTimeRecoveryDescription", {}).get("PointInTimeRecoveryStatus") != "ENABLED"):
+                raise ReleaseBlocked("retained_table_protection_mismatch")
+        elif resource_type == "AWS::Cognito::UserPool":
+            pool = session.client("cognito-idp", region_name=REGION).describe_user_pool(UserPoolId=physical)["UserPool"]
+            if pool.get("DeletionProtection") != "ACTIVE" or pool.get("MfaConfiguration") != "ON":
+                raise ReleaseBlocked("retained_pool_protection_mismatch")
+
+
+def run_release(session: Any, env: dict, build: Path, operation: str) -> dict:
+    """Run a TEST-only update; the caller must first verify the immutable artifact."""
+    validate_context(env)
+    if operation not in OPERATIONS or not re.fullmatch(r"[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]", env.get("ARTIFACTS_BUCKET", "")):
+        raise ReleaseBlocked("release_inputs_invalid")
+    identity = session.client("sts", region_name=REGION).get_caller_identity()
+    cfn = session.client("cloudformation", region_name=REGION)
+    before = cfn.describe_stacks(StackName=STACK)["Stacks"][0]
+    validate_stack(before, identity["Account"], expected_account_hash=ACCOUNT_HASH)
+    parameters = lifecycle_parameters(before, operation, env.get("THN_V2_TEST_PARAMETERS_JSON"))
+    previous = _load_template(cfn.get_template(StackName=STACK, TemplateStage="Original")["TemplateBody"])
+    initial_inventory = _inventory(cfn)
+    if operation in {"enable", "disable", "operator-patch", "authorizer-patch"}:
+        _verify_retained_state(session, initial_inventory, previous)
+    prefix = f"{STACK}/thn/{env['GITHUB_RUN_ID']}/{env['GITHUB_RUN_ATTEMPT']}/{env['GITHUB_SHA']}"
+    candidate = previous if operation == "disable" else _package_template(build, env["ARTIFACTS_BUCKET"], prefix)
+    if operation == "enable":
+        candidate = preserve_provisioned_code(candidate, previous, env["GITHUB_SHA"], env["ARTIFACTS_BUCKET"])
+    if operation == "operator-patch":
+        template = prepare_operator_patch(candidate, previous, env["GITHUB_SHA"], env["ARTIFACTS_BUCKET"])
+    elif operation == "authorizer-patch":
+        template = prepare_authorizer_patch(candidate, previous, env["GITHUB_SHA"], env["ARTIFACTS_BUCKET"])
+    else:
+        template = compose_template(candidate, previous, operation)
+    serialized = json.dumps(template, sort_keys=True, separators=(",", ":")).encode()
+    key = prefix + "/template-" + hashlib.sha256(serialized).hexdigest() + ".json"
+    session.client("s3", region_name=REGION).put_object(Bucket=env["ARTIFACTS_BUCKET"], Key=key,
+        Body=serialized, ContentType="application/json", ServerSideEncryption="AES256",
+        ExpectedBucketOwner=identity["Account"])
+    name = f"thn-{env['GITHUB_RUN_ID']}-{env['GITHUB_RUN_ATTEMPT']}"
+    arguments = {"StackName": STACK, "ChangeSetName": name, "ChangeSetType": "UPDATE",
+        "TemplateURL": f"https://s3.{REGION}.amazonaws.com/{env['ARTIFACTS_BUCKET']}/{key}",
+        "Parameters": parameters, "Capabilities": ["CAPABILITY_IAM", "CAPABILITY_NAMED_IAM"],
+        "Description": f"THN TEST {operation} source {env['GITHUB_SHA']}", "ClientToken": name}
+    if before.get("RoleARN"):
+        arguments["RoleARN"] = before["RoleARN"]
+    change_id = cfn.create_change_set(**arguments)["Id"]
+    executed = False
+    try:
+        for attempt in range(120):
+            description = cfn.describe_change_set(StackName=STACK, ChangeSetName=change_id)
+            if description.get("Status") not in {"CREATE_PENDING", "CREATE_IN_PROGRESS"}:
+                break
+            time.sleep(5)
+        else:
+            raise ReleaseBlocked("change_set_creation_timeout")
+        decision = review_change_set(description, change_id, name, parameters, operation)
+        if decision == "noop":
+            _verify_retained_state(session, initial_inventory, template)
+            return {"operation": operation, "decision": "noop", "retained_state_verified": True}
+        current = cfn.describe_stacks(StackName=STACK)["Stacks"][0]
+        validate_stack(current, identity["Account"], expected_account_hash=ACCOUNT_HASH)
+        if (_parameters(current) != _parameters(before) or _inventory(cfn) != initial_inventory
+                or _load_template(cfn.get_template(StackName=STACK, TemplateStage="Original")["TemplateBody"]) != previous):
+            raise ReleaseBlocked("stack_changed_during_review")
+        cfn.execute_change_set(StackName=STACK, ChangeSetName=change_id, ClientRequestToken=name)
+        executed = True
+        cfn.get_waiter("stack_update_complete").wait(StackName=STACK, WaiterConfig={"Delay": 10, "MaxAttempts": 180})
+        for observation in range(2):
+            if observation:
+                time.sleep(5)
+            after = cfn.describe_stacks(StackName=STACK)["Stacks"][0]
+            validate_stack(after, identity["Account"], expected_account_hash=ACCOUNT_HASH)
+            actual = _parameters(after)
+            for parameter in parameters:
+                key_name = parameter["ParameterKey"]
+                expected = parameter.get("ParameterValue", _parameters(before).get(key_name))
+                if key_name not in {"ThnAuthAdminV2OriginHeaderSha256Current", "ThnAuthAdminV2OriginHeaderSha256Previous"} and actual.get(key_name) != expected:
+                    raise ReleaseBlocked("deployed_parameter_mismatch")
+            inventory = _inventory(cfn)
+            for logical, item in initial_inventory.items():
+                must_preserve = (not logical.startswith(PREFIX)
+                    or item["ResourceType"] in STATE_TYPES | PERSISTENT_RUNTIME_TYPES
+                    or (operation in {"operator-patch", "authorizer-patch"}
+                        and item["ResourceType"] != "AWS::Lambda::Version"))
+                if must_preserve and inventory.get(logical) != item:
+                    raise ReleaseBlocked("retained_or_legacy_resource_changed")
+            if operation in {"provision", "disable"} and any(item["ResourceType"] in {"AWS::ApiGatewayV2::Api", "AWS::Lambda::Url", "AWS::ApiGatewayV2::Route"}
+                    for logical, item in inventory.items() if logical.startswith(PREFIX)):
+                raise ReleaseBlocked("disabled_routes_still_present")
+            _verify_retained_state(session, inventory, template)
+        return {"operation": operation, "decision": "executed", "retained_state_verified": True,
+                "source_sha": env["GITHUB_SHA"], "template_sha256": hashlib.sha256(serialized).hexdigest()}
+    finally:
+        if not executed:
+            cfn.delete_change_set(StackName=STACK, ChangeSetName=change_id)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--operation", choices=sorted(OPERATIONS), required=True)
+    parser.add_argument("--build", type=Path, default=Path(".aws-sam/build"))
+    args = parser.parse_args()
+    try:
+        import boto3
+        result = run_release(boto3.Session(region_name=REGION), dict(os.environ), args.build, args.operation)
+    except ReleaseBlocked as error:
+        print(str(error), file=sys.stderr)
+        return 1
+    except Exception:
+        # AWS exceptions can contain parameter values and resource identifiers.
+        print("thn_test_release_failed; access remains subject to the independent registry gate", file=sys.stderr)
+        return 1
+    print(json.dumps(result, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

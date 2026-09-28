@@ -71,6 +71,10 @@ Deployments pass a base64-encoded JSON config through `AuthAdminConfigJsonBase64
 - Stack-created DynamoDB tables are default storage. A per-profile `tables` block may point a profile to draft-specific tables only when that isolation is explicitly configured server-side.
 - `mfa.mode` may be `off`, `optional`, or `required`; `optional` and `required` require TOTP to be enabled in profile policy and Cognito.
 - `mfa.totp.issuer`, `accountLabelTemplate`, and `friendlyDeviceName` are optional authenticator display fields. Template placeholders are limited to `{domain}`, `{authProfileId}`, `{tenantId}`, `{username}`, and `{email}`.
-- TOTP setup material is sensitive. Return it only for explicit enrollment; never put it in URLs, logs, analytics, or durable notes.
+- TOTP setup material is sensitive. Return it only for explicit enrollment;
+  never put it in URLs, logs, analytics, screenshots, or durable notes. The THN
+  v2 profile narrows this further: only the five-minute, single-use
+  `POST /auth-v2/session/mfa/setup` response may carry the manual setup key,
+  after exact-origin and CSRF validation and with no-store/no-referrer headers.
 - `/auth/session/mfa/disable` is self-service only after password plus current TOTP reauthentication. Lost-device recovery remains an admin/support path.
 - `/auth/admin/users/{subject}/mfa/reset` disables the target software-token preference, bumps session version, and audits the action without exposing or deleting a TOTP secret in browser responses.

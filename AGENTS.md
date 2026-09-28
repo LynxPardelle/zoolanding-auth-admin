@@ -36,13 +36,34 @@ The hub owns browser-safe cross-repository contracts. This repository remains ca
 
 ## Non-negotiable security boundaries
 
-- Own only the exact `/auth/session/*` and `/auth/admin/*` routes declared in `template.yaml`. Never add a broad `/auth/*` front-door rule that can consume Angular routes such as `/auth/callback`.
+- Own only the exact `/auth/session/*`, `/auth/admin/*`, and six TEST-only
+  `/auth-v2/session/*` routes declared in `template.yaml`. API Proxy alone owns
+  `/auth-v2/runtime-config`. Never add a broad `/auth/*` or `/auth-v2/*`
+  front-door rule that can consume Angular or another service's routes.
 - Keep tenant, environment, Cognito, group, approval, and manageable-group policy in server-only `AUTH_ADMIN_CONFIG_JSON_BASE64`; browser input cannot select that policy.
 - Return only the existing sanitized public account/session fields. Never expose raw identity-provider records, unnecessary PII, JWTs, access or refresh tokens, Cognito challenge sessions, cookies, secret references, table names, partition keys, or other internal storage metadata.
 - Preserve `__Host-zlp_session` as `HttpOnly`, `Secure`, `SameSite=Lax`, and `Path=/`. Mutations require the matching readable CSRF cookie, `X-ZLP-CSRF`, and server-side CSRF hash. Challenge and enrollment cookies remain separate and short-lived.
 - Require `X-ZLP-Domain` and `X-ZLP-Auth-Profile-Id`, compare them with the private session/profile, and keep session, user-state, and audit records isolated by the resolved draft/profile boundary.
 - Re-read current user state and session version for admin access and mutations. Pending, suspended, group-removed, environment-mismatched, revoked, and expired sessions fail closed.
-- Audit every admin mutation without raw request secrets or PII. TOTP setup material may be returned only during explicit enrollment and must not enter URLs, logs, analytics, or durable notes.
+- Audit every admin mutation without raw request secrets or PII. The only v2
+  browser exception for TOTP setup is the five-minute, single-use response from
+  `POST /auth-v2/session/mfa/setup` after exact-origin and CSRF validation. It
+  may contain the manual setup key but must use no-store/no-referrer headers and
+  must never put that material in URLs, logs, analytics, screenshots, durable
+  notes, or any other response.
+- Keep `tools/provision_thn_owner.py` operator-only and TEST-only. Its exact
+  group is `journal-owner`, its purpose is always `client-owner`, and it must
+  retain the transactional singleton reservation and pre-mutation audit intent.
+  Account, partition, and region are reviewed trust anchors, never caller/argv
+  selectors. Reset must leave the owner disabled and delete TOTP with
+  `AdminDeleteSoftwareToken`. The CLI may call only the exact versioned alias's
+  `AWS_IAM` function URL. Both identity and resource policies must restrict
+  `lambda:InvokeFunction` with `lambda:InvokedViaFunctionUrl=true`; direct and
+  asynchronous invoke remain denied. The URL is buffered, has no CORS, and the
+  mediator has no API route, custom domain, DLQ, or destination. Neither surface
+  may invoke or edit `zoolanding-cognito-user-lifecycle`. Keep the human role
+  free of direct Cognito/DynamoDB/CloudFormation permissions. Describe the audit
+  as append-only against that human role, not as WORM against authorized deployers.
 
 ## Development and release
 
@@ -53,6 +74,7 @@ The hub owns browser-safe cross-repository contracts. This repository remains ca
 ```powershell
 python -m unittest discover -s tests -p "test_*.py"
 pip-audit -r requirements.txt
+pip-audit -r requirements-tools.txt
 sam validate
 actionlint -no-color
 ```
