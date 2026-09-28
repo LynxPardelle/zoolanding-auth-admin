@@ -29,3 +29,18 @@ The protected source promotion now checks the parsed native merge commit
 against GITHUB_SHA. This resolves the actual ShellCheck SC2034 unused-variable
 failure and explicitly binds the head identity. Actionlint 1.7.12 with the CI
 ShellCheck 0.9.0 validates every tracked workflow without suppressing checks.
+
+Gitleaks 8.30.1 classified two public AWS CloudFormation API provider schema
+SHA-256 values as API credentials. Both values match the actual AWS CLI schema
+capture. Only their original commit/path/rule/line fingerprints are excluded;
+all other findings, file contents and rules remain scanned. The full history
+scan passes, and an unknown synthetic credential still fails the same scanner.
+
+- Compare artifact targets against the selected environment: both current SAM
+  templates contain exactly four functions; TEST uses its QA/owner mediator and
+  production uses its separate client-owner mediator. The five-target union is
+  only a lookup table. The default checker and validation-only TEST transport
+  require TEST's exact four; production packaging explicitly selects its four.
+- Proved the prior default TEST checker failure with the real four-target build;
+  added native-template parity, real builder/CLI and wrong/extra/missing-target
+  regressions. No template, grants, or Lambda handler source changed.

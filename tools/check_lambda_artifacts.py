@@ -11,7 +11,8 @@ _PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[1]
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-from tools.build_lambda_artifact import REPOSITORY_ROOT, SOURCE_ALLOWLIST
+from tools.build_lambda_artifact import (REPOSITORY_ROOT, SOURCE_ALLOWLIST,
+                                        ArtifactBuildError, source_allowlist_for_environment)
 
 
 FORBIDDEN_DIRECTORIES = frozenset({".github", "changelog", "docs", "tests", "tools"})
@@ -20,6 +21,8 @@ PROJECT_SOURCE_NAMES = frozenset(
         "lambda_function.py",
         "thn_environment_profile.py",
         "auth_admin_current_user_v2.py",
+        "auth_admin_production_owner_operator_v2.py",
+        "provision_thn_production_owner.py",
         "auth_admin_session_v2.py",
         "auth_admin_origin_authorizer_v2.py",
         "auth_admin_owner_operator_v2.py",
@@ -65,15 +68,38 @@ def validate_artifact(target: str, artifact_dir: pathlib.Path | str) -> None:
         raise ArtifactValidationError("Lambda artifact allowlist mismatch")
 
 
+def validate_inventory(build_root: pathlib.Path | str, environment: str = "test") -> None:
+    root = pathlib.Path(build_root)
+    try:
+        selected = source_allowlist_for_environment(environment)
+    except ArtifactBuildError as error:
+        raise ArtifactValidationError("unknown Lambda artifact environment") from error
+    if not root.is_dir() or {path.name for path in root.iterdir()} != set(selected) | {"template.yaml"}:
+        raise ArtifactValidationError("Lambda environment inventory mismatch")
+    if not (root / "template.yaml").is_file():
+        raise ArtifactValidationError("Lambda build template is missing")
+    for target in selected:
+        validate_artifact(target, root / target)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
     build_root = REPOSITORY_ROOT / ".aws-sam" / "build"
-    targets = list(SOURCE_ALLOWLIST) if not arguments else arguments
+    environment = "test"
+    if arguments[:1] == ["--environment"]:
+        if len(arguments) < 2:
+            return 2
+        environment, arguments = arguments[1], arguments[2:]
     try:
-        for target in targets:
+        selected = source_allowlist_for_environment(environment)
+        if not arguments:
+            validate_inventory(build_root, environment)
+        for target in arguments:
+            if target not in selected:
+                raise ArtifactValidationError("Lambda target belongs to another environment")
             validate_artifact(target, build_root / target)
         return 0
-    except ArtifactValidationError as error:
+    except (ArtifactValidationError, ArtifactBuildError) as error:
         print(str(error), file=sys.stderr)
         return 2
 

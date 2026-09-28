@@ -210,6 +210,9 @@ def sealed_packages(session,template):
                     release.require(names==expected_sources)
             else:
                 from tools.build_lambda_artifact import SOURCE_ALLOWLIST
+                if CONFIG["service"] == "auth":
+                    from tools.build_lambda_artifact import PRODUCTION_SOURCE_ALLOWLIST
+                    SOURCE_ALLOWLIST = PRODUCTION_SOURCE_ALLOWLIST
                 expected_sources=set(SOURCE_ALLOWLIST[logical])
                 project_sources={name for name in names if (ROOT/name).is_file()}
                 release.require(project_sources==expected_sources,'production_zip_source_inventory_mismatch')

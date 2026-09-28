@@ -38,6 +38,12 @@ SOURCE_ALLOWLIST = {
         "tools/provision_thn_qa.py",
     ),
 }
+# The union is for per-target lookup only; native templates each contain four
+# functions with separate TEST and production owner mediators.
+TEST_SOURCE_ALLOWLIST = {key: value for key, value in SOURCE_ALLOWLIST.items()
+                         if key != "ThnProductionOwnerOperatorV2Function"}
+PRODUCTION_SOURCE_ALLOWLIST = {key: value for key, value in SOURCE_ALLOWLIST.items()
+                               if key != "ThnAuthAdminV2OwnerOperatorFunction"}
 RUNTIME_REQUIREMENTS = {
     "AuthAdminFunction": "requirements.txt",
     "ThnProductionOwnerOperatorV2Function": "requirements-tools.txt",
@@ -49,6 +55,14 @@ RUNTIME_REQUIREMENTS = {
 
 class ArtifactBuildError(RuntimeError):
     """The requested artifact cannot be assembled from the exact allowlist."""
+
+
+def source_allowlist_for_environment(environment: str):
+    if environment == "test":
+        return TEST_SOURCE_ALLOWLIST
+    if environment == "production":
+        return PRODUCTION_SOURCE_ALLOWLIST
+    raise ArtifactBuildError("unknown Lambda artifact environment")
 
 
 def build_artifact(
