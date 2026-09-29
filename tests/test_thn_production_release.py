@@ -1,6 +1,25 @@
 import copy
 import unittest
 from tools.thn_production_release import ReleaseError, make_review_record, verify_review_record, review_inventory, select_parameters
+
+class SimulationFingerprintTests(unittest.TestCase):
+    def test_matched_statement_order_does_not_change_permission_fingerprint(self):
+        from tools.thn_production_release import stable_simulation_evaluations, sha
+        first={'SourcePolicyId':'role_deploy_One','SourcePolicyType':'IAM Policy','StartPosition':{'Line':1,'Column':1}}
+        second={'SourcePolicyId':'role_deploy_Two','SourcePolicyType':'IAM Policy','StartPosition':{'Line':2,'Column':1}}
+        result={'EvalActionName':'cloudformation:describestacks','EvalResourceName':'*','EvalDecision':'allowed',
+                'ResourceSpecificResults':[{'EvalResourceName':'*','EvalResourceDecision':'allowed','MatchedStatements':[first,second]}]}
+        reordered=copy.deepcopy(result)
+        reordered['ResourceSpecificResults'][0]['MatchedStatements'].reverse()
+        stable=stable_simulation_evaluations([result])
+        self.assertEqual(sha(stable),sha(stable_simulation_evaluations([reordered])))
+        denied=copy.deepcopy(result)
+        denied['ResourceSpecificResults'][0]['EvalResourceDecision']='implicitDeny'
+        self.assertNotEqual(sha(stable),sha(stable_simulation_evaluations([denied])))
+        changed_policy=copy.deepcopy(result)
+        changed_policy['ResourceSpecificResults'][0]['MatchedStatements'][0]['SourcePolicyId']='role_deploy_Other'
+        self.assertNotEqual(sha(stable),sha(stable_simulation_evaluations([changed_policy])))
+
 class RetainedProductionReleaseTests(unittest.TestCase):
     def record(self):
         return make_review_record(service='auth',purpose='state',source_sha='a'*40,stack_id='arn:aws:cloudformation:us-east-1:765932874577:stack/zoolanding-auth-admin-prod/id',change_set_arn='arn:aws:cloudformation:us-east-1:765932874577:changeSet/thn-production-auth-state/id',created_at=1000,baseline={'resources':[]},original={'Resources':{}},processed={'Resources':{}},parameters=[],packages=[{'bucket':'bucket','key':'key','versionId':'v1','sha256':'b'*64}],changes=[],recovery=[])
