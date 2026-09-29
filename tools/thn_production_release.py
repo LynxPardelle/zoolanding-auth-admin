@@ -44,6 +44,19 @@ def canonical(value):
 def sha(value):
     return hashlib.sha256(value if isinstance(value,bytes) else canonical(value)).hexdigest()
 
+def stable_simulation_evaluations(evaluations):
+    """Preserve IAM evidence while ignoring provider ordering of equal results."""
+    rows=deepcopy(evaluations)
+    for row in rows:
+        for key in ('MatchedStatements','MissingContextValues'):
+            if key in row:row[key]=sorted(row[key],key=canonical)
+        for resource in row.get('ResourceSpecificResults',[]):
+            for key in ('MatchedStatements','MissingContextValues'):
+                if key in resource:resource[key]=sorted(resource[key],key=canonical)
+        if 'ResourceSpecificResults' in row:
+            row['ResourceSpecificResults']=sorted(row['ResourceSpecificResults'],key=canonical)
+    return sorted(rows,key=canonical)
+
 def _sha(value,length=64):
     return isinstance(value,str) and bool(re.fullmatch('[a-f0-9]{'+str(length)+'}',value)) and value!='0'*length
 

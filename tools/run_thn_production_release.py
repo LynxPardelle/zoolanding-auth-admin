@@ -157,7 +157,7 @@ def identity_and_permissions(session,source,purpose,native_changes=None,native_t
                 else:covered.append(evaluation.get('EvalResourceName'))
             release.require(sorted(covered,key=str)==sorted(request['resources']),
                 'production_iam_simulation_resource_coverage_incomplete')
-        proofs.append({'request':request,'evaluation':evaluations})
+        proofs.append({'request':request,'evaluation':release.stable_simulation_evaluations(evaluations)})
     # Full policy documents stay in memory, are fingerprinted and never emitted.
     def policies(name):
         values=[]
