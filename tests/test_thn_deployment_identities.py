@@ -33,3 +33,13 @@ class DeploymentIdentityManifestTests(unittest.TestCase):
      self.assertEqual(r['Condition'],'HasVerifiedProductionOwnerPool')
      self.assertEqual(statement['Resource'],{'Ref':'ThnProductionOwnerPoolArn'})
   self.assertEqual(value['template']['Parameters']['ThnProductionOwnerPoolArn']['Default'],'BLOCKED')
+
+ def test_generated_github_trust_uses_only_supported_aws_claims(self):
+  value=self.manifest();count=0
+  for r in value['template']['Resources'].values():
+   if r['Type']=='AWS::IAM::Role' and r['Properties']['RoleName'].endswith('github-deploy'):
+    count+=1;role=r['Properties']['RoleName'];repo='zoolanding-image-upload' if 'image-upload' in role else 'zoolanding-api-proxy'
+    self.assertEqual(r['Properties']['AssumeRolePolicyDocument']['Statement'][0]['Condition'],{'StringEquals':{'token.actions.githubusercontent.com:aud':'sts.amazonaws.com','token.actions.githubusercontent.com:sub':f'repo:LynxPardelle/{repo}:environment:production'}})
+  self.assertEqual(count,3)
+  generator=(Path(__file__).resolve().parents[1]/'tools/build_thn_deployment_identities.py').read_text()
+  self.assertNotIn('token.actions.githubusercontent.com:ref',generator)

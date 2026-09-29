@@ -90,7 +90,6 @@ class EffectivePermissionDriverTests(unittest.TestCase):
         from tools import run_thn_production_release as driver
         config=driver.CONFIG;account='765932874577';caller=f"arn:aws:iam::{account}:role/{config['deployRole']}";execution=f"arn:aws:iam::{account}:role/{config['executionRole']}"
         conditions={'token.actions.githubusercontent.com:aud':'sts.amazonaws.com','token.actions.githubusercontent.com:sub':f"repo:LynxPardelle/{config['repository']}:environment:production"}
-        if config['service'] in {'api','image'}:conditions['token.actions.githubusercontent.com:ref']='refs/heads/main'
         roles={config['deployRole']:{'Arn':caller,'AssumeRolePolicyDocument':{'Statement':[{'Effect':'Allow','Action':'sts:AssumeRoleWithWebIdentity','Principal':{'Federated':f'arn:aws:iam::{account}:oidc-provider/token.actions.githubusercontent.com'},'Condition':{'StringEquals':conditions}}]}},config['executionRole']:{'Arn':execution,'AssumeRolePolicyDocument':{'Statement':[{'Effect':'Allow','Action':'sts:AssumeRole','Principal':{'Service':'cloudformation.amazonaws.com'}}]}}}
         iam=Mock();iam.get_role.side_effect=lambda **kw:{'Role':roles[kw['RoleName']]}
         shape=boto3.Session(region_name='us-east-1')._session.get_service_model('iam').operation_model('GetContextKeysForPrincipalPolicy').input_shape
