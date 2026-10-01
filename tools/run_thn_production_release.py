@@ -4,6 +4,7 @@ Required deployment/permission selections are provided by a reviewed production
 Environment. Missing proposed roles, bindings, proofs or objects fail closed.
 """
 from pathlib import Path
+from copy import deepcopy
 import argparse
 import json
 import os
@@ -268,11 +269,15 @@ def candidate_for_scope(candidate,baseline,purpose):
     if purpose in {'state','activate'} and not baseline.get('absent'):
         for logical,item in old['Resources'].items():
             if not logical.startswith(('Thn','ServiceBinding')) and logical!='ContentHubApi':
-                candidate['Resources'][logical]=item
+                candidate['Resources'][logical]=deepcopy(item)
         for name,item in old.get('Parameters',{}).items():
             if not name.startswith(('Thn','ServiceBinding','ProvisionThn','EnableThn')) and name!='EnvironmentName':
-                candidate['Parameters'][name]=item
+                candidate['Parameters'][name]=deepcopy(item)
     return candidate
+
+def recovery_original_from_baseline(baseline):
+    """Keep recovery code coordinates separate from the live baseline."""
+    return deepcopy(release.parse_template(baseline['original']))
 
 def review(session,args,source,identity,permissions):
     cf=session.client('cloudformation');s3=session.client('s3')
@@ -298,7 +303,7 @@ def review(session,args,source,identity,permissions):
     prefix=f'thn/production/{CONFIG["service"]}/{source["sourceSha"]}/{os.environ["GITHUB_RUN_ID"]}/{os.environ["GITHUB_RUN_ATTEMPT"]}/'
     recovery=[]
     if not baseline.get('absent'):
-        original=release.parse_template(baseline['original'])
+        original=recovery_original_from_baseline(baseline)
         historical=[]
         functions={r['LogicalResourceId']:r for r in baseline['resources'] if r.get('ResourceType')=='AWS::Lambda::Function'}
         for logical,item in original['Resources'].items():
