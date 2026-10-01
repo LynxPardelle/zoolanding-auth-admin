@@ -4,6 +4,7 @@ Reads sanitized AWS CLI evidence and the five reviewed SAM projections. It does
 not contact AWS or alter any role. Output is a source file reviewed with Infra.
 """
 import argparse,json,re,sys,subprocess
+from copy import deepcopy
 from pathlib import Path
 from tools.thn_production_release import sha,require,ACCOUNT,REGION
 ROOT=Path(__file__).resolve().parents[1]
@@ -15,7 +16,26 @@ GROUPS={
  'apiGeneral':('zoolanding-api-proxy-thn-guard-integration','zoolanding-api-proxy','zoolanding-api-proxy','zoolanding-deployer-api-proxy-production-github-deploy','zoolanding-deployer-api-proxy-production-cfn-exec','template.yaml'),
 }
 BUCKET='zlp-thn-production-releases-765932874577-us-east-1'
+API_RUNTIME_ROLE='zlp-thn-auth-runtime-prod-role'
+API_RUNTIME_FUNCTION='zlp-thn-auth-runtime-production'
 ARN=lambda service,value:f'arn:aws:{service}:{REGION}:{ACCOUNT}:{value}'
+
+def function_role_names(native,names):
+    result=set()
+    for item in native['Resources'].values():
+        if item['Type']!='AWS::Lambda::Function':continue
+        role=item.get('Properties',{}).get('Role')
+        if isinstance(role,dict) and set(role)=={'Fn::GetAtt'}:
+            logical,attribute=role['Fn::GetAtt']
+            require(attribute=='Arn' and logical in names,'bootstrap_function_role_unresolved')
+            result.add(names[logical])
+        else:
+            prefix=f'arn:aws:iam::{ACCOUNT}:role/'
+            require(isinstance(role,str) and role.startswith(prefix) and
+                    re.fullmatch(r'[A-Za-z0-9+=,.@_-]{1,64}',role[len(prefix):]),
+                    'bootstrap_function_role_unresolved')
+            result.add(role[len(prefix):])
+    return sorted(result)
 
 def candidate(workspace,group):
     checkout,_,stack,_,_,source=GROUPS[group]
@@ -106,8 +126,7 @@ def compile_manifest(workspace,evidence):
         resources[prefix+'GithubReleasePolicy']={'Type':'AWS::IAM::Policy','DeletionPolicy':'Retain','UpdateReplacePolicy':'Retain','Properties':{'PolicyName':'ThnRetainedProductionReleaseV1','Roles':[{'Ref':prefix+'GithubDeployRole'} if prefix+'GithubDeployRole' in resources else deploy],'PolicyDocument':{'Version':'2012-10-17','Statement':caller}}}
         execution_statements=[]
         iam_names=[r['nameOrApprovedGeneratedPrefix'] for r in requirements if r['resourceType']=='AWS::IAM::Role']
-        lambda_role_ids={item['Properties']['Role']['Fn::GetAtt'][0] for item in native['Resources'].values() if item['Type']=='AWS::Lambda::Function' and isinstance(item.get('Properties',{}).get('Role'),dict) and 'Fn::GetAtt' in item['Properties']['Role']}
-        lambda_roles=[names[logical] for logical in sorted(lambda_role_ids)]
+        lambda_roles=function_role_names(native,names)
         for row in requirements:
             kind=row['resourceType'];name=row['nameOrApprovedGeneratedPrefix'];targets=[]
             if kind.startswith('AWS::Lambda'):targets=[ARN('lambda','function:'+n+suffix) for n in lambda_names for suffix in ('',':*')]
@@ -162,6 +181,20 @@ def compile_manifest(workspace,evidence):
             refs.append({'Ref':logical})
         properties=resources[prefix+'CfnExecutionRole']['Properties'];del properties['Policies'];properties['ManagedPolicyArns']=refs
         planned.append({'group':group,'repository':repo,'stackName':stack,'deployRoleArn':deploy_arn,'executionRoleArn':exec_arn,'resourceRequirements':requirements})
+    resources['ApiRuntimeRole']={
+        'Type':'AWS::IAM::Role','DeletionPolicy':'Retain','UpdateReplacePolicy':'Retain',
+        'Properties':{
+            'RoleName':API_RUNTIME_ROLE,'MaxSessionDuration':3600,
+            'AssumeRolePolicyDocument':{'Version':'2012-10-17','Statement':[
+                {'Effect':'Allow','Action':'sts:AssumeRole','Principal':{'Service':'lambda.amazonaws.com'}}]},
+            'Policies':[{'PolicyName':'ThnExactProductionRegistryRuntimeRead',
+                'PolicyDocument':{'Version':'2012-10-17','Statement':[
+                    statement(['dynamodb:GetItem'],[ARN('dynamodb','table/zoolanding-content-hub-prod-ServiceBindingRegistryV2')],
+                        {'ForAllValues:StringEquals':{'dynamodb:LeadingKeys':['SERVICE_BINDING#production#thn-journal-production-v2']},
+                         'Null':{'dynamodb:LeadingKeys':'false'}}),
+                    statement(['logs:CreateLogStream','logs:PutLogEvents'],
+                        [ARN('logs','log-group:/aws/lambda/'+API_RUNTIME_FUNCTION+':*')])
+                ]}}]}}
     merged={}
     for row in proof:
         key=sha({k:v for k,v in row.items() if k!='logicalId'})
@@ -171,7 +204,36 @@ def compile_manifest(workspace,evidence):
     manifest={'schemaVersion':1,'environment':'production','account':ACCOUNT,'region':REGION,'bootstrapStackName':'ZoolandingProduction-Zoolandingpage-production-ThnDeploymentIdentities','template':{'AWSTemplateFormatVersion':'2010-09-09','Parameters':{'ThnProductionOwnerPoolArn':{'Type':'String','Default':'BLOCKED','AllowedPattern':'^(BLOCKED|arn:aws:cognito-idp:us-east-1:765932874577:userpool/us-east-1_[A-Za-z0-9]+)$'}},'Conditions':{'HasVerifiedProductionOwnerPool':{'Fn::Not':[{'Fn::Equals':[{'Ref':'ThnProductionOwnerPoolArn'},'BLOCKED']}]}},'Resources':resources},'externalRolePolicyBaselines':baselines,'providerSchemaHashes':{kind:v['schemaSha256'] for kind,v in schemas.items()},'sourceCandidateHashes':candidate_hashes,'proofMatrix':proof,'groups':planned,'packageBucket':BUCKET,'readiness':'planned; effective permission simulations and exact native approval remain required'}
     return manifest
 
+def overlay_api_manifest(base,generated):
+    """Carry only the reviewed API identity slice into a later manifest."""
+    require(all(base.get(key)==generated.get(key) for key in
+                ('schemaVersion','environment','account','region','bootstrapStackName')),
+            'bootstrap_api_overlay_identity_changed')
+    result=deepcopy(base)
+    current=result['template']['Resources'];proposed=generated['template']['Resources']
+    api=lambda name:name.startswith('Api') and not name.startswith('ApiGeneral')
+    old_api={name for name in current if api(name)}
+    new_api={name for name in proposed if api(name)}
+    require(old_api<=new_api and 'ApiRuntimeRole' in new_api,
+            'bootstrap_api_overlay_resource_changed')
+    for name in new_api:current[name]=deepcopy(proposed[name])
+    old_groups=[item for item in result['groups'] if item['group']=='api']
+    new_groups=[item for item in generated['groups'] if item['group']=='api']
+    require(len(old_groups)==len(new_groups)==1,'bootstrap_api_overlay_group_changed')
+    result['groups']=[deepcopy(new_groups[0]) if item['group']=='api' else item
+                      for item in result['groups']]
+    old_proof=result['proofMatrix'];api_rows=[deepcopy(item) for item in
+                                               generated['proofMatrix'] if item['group']=='api']
+    positions=[index for index,item in enumerate(old_proof) if item['group']=='api']
+    require(positions and positions==list(range(positions[0],positions[-1]+1)) and api_rows,
+            'bootstrap_api_overlay_proof_changed')
+    result['proofMatrix']=old_proof[:positions[0]]+api_rows+old_proof[positions[-1]+1:]
+    result['sourceCandidateHashes']['api']=deepcopy(generated['sourceCandidateHashes']['api'])
+    return result
+
 def main():
- p=argparse.ArgumentParser();p.add_argument('--evidence',type=Path,required=True);p.add_argument('--workspace',type=Path,default=ROOT.parent);p.add_argument('--output',type=Path,default=ROOT/'tools/production/thn-deployment-identities.json');args=p.parse_args()
- value=compile_manifest(args.workspace,json.loads(args.evidence.read_text()));args.output.parent.mkdir(parents=True,exist_ok=True);args.output.write_text(json.dumps(value,sort_keys=True,indent=2)+'\n');print(json.dumps({'manifestSha256':sha(value),'resources':len(value['template']['Resources']),'proofs':len(value['proofMatrix'])}))
+ p=argparse.ArgumentParser();p.add_argument('--evidence',type=Path,required=True);p.add_argument('--workspace',type=Path,default=ROOT.parent);p.add_argument('--output',type=Path,default=ROOT/'tools/production/thn-deployment-identities.json');p.add_argument('--base',type=Path);args=p.parse_args()
+ value=compile_manifest(args.workspace,json.loads(args.evidence.read_text()))
+ if args.base:value=overlay_api_manifest(json.loads(args.base.read_text()),value)
+ args.output.parent.mkdir(parents=True,exist_ok=True);args.output.write_text(json.dumps(value,sort_keys=True,indent=2)+'\n');print(json.dumps({'manifestSha256':sha(value),'resources':len(value['template']['Resources']),'proofs':len(value['proofMatrix'])}))
 if __name__=='__main__':main()
