@@ -21,6 +21,31 @@ class SimulationFingerprintTests(unittest.TestCase):
         self.assertNotEqual(sha(stable),sha(stable_simulation_evaluations([changed_policy])))
 
 class RetainedProductionReleaseTests(unittest.TestCase):
+    def test_private_candidate_is_independent_of_recovery_rewrite(self):
+        from tools import run_thn_production_release as driver
+        original={'Resources':{'ExistingFunction':{'Type':'AWS::Lambda::Function',
+            'Properties':{'Code':{'S3Bucket':'legacy','S3Key':'live.zip'}}}},
+            'Parameters':{'LegacyMode':{'Type':'String','Default':'stable'}}}
+        baseline={'original':original}
+        candidate={'Resources':{'ExistingFunction':{'Type':'AWS::Serverless::Function','Properties':{}},
+            'ThnNewFunction':{'Type':'AWS::Serverless::Function','Properties':{}}},
+            'Parameters':{'LegacyMode':{'Type':'String','Default':'changed'}}}
+        selected=driver.candidate_for_scope(candidate,baseline,'state')
+        original['Resources']['ExistingFunction']['Properties']['Code']={'S3Bucket':'release','S3Key':'recovery.zip'}
+        self.assertEqual(selected['Resources']['ExistingFunction']['Properties']['Code'],
+            {'S3Bucket':'legacy','S3Key':'live.zip'})
+        self.assertEqual(selected['Parameters']['LegacyMode']['Default'],'stable')
+
+    def test_recovery_rewrite_does_not_change_baseline_digest(self):
+        from tools import run_thn_production_release as driver
+        from tools.thn_production_release import sha
+        baseline={'original':{'Resources':{'ExistingFunction':{'Type':'AWS::Lambda::Function',
+            'Properties':{'Code':{'S3Bucket':'legacy','S3Key':'live.zip'}}}}}}
+        before=sha(baseline)
+        recovery=driver.recovery_original_from_baseline(baseline)
+        recovery['Resources']['ExistingFunction']['Properties']['Code']={'S3Bucket':'release','S3Key':'recovery.zip'}
+        self.assertEqual(sha(baseline),before)
+
     def record(self):
         return make_review_record(service='auth',purpose='state',source_sha='a'*40,stack_id='arn:aws:cloudformation:us-east-1:765932874577:stack/zoolanding-auth-admin-prod/id',change_set_arn='arn:aws:cloudformation:us-east-1:765932874577:changeSet/thn-production-auth-state/id',created_at=1000,baseline={'resources':[]},original={'Resources':{}},processed={'Resources':{}},parameters=[],packages=[{'bucket':'bucket','key':'key','versionId':'v1','sha256':'b'*64}],changes=[],recovery=[])
     def test_sealed_exact_review_all_fields_and_expiry(self):
