@@ -2976,9 +2976,23 @@
           ],
           "identityStatus": "planned",
           "logicalId": "ThnAuthRuntimeV2Function",
-          "nameOrApprovedGeneratedPrefix": "zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*",
+          "nameOrApprovedGeneratedPrefix": "zlp-thn-auth-runtime-production",
           "providerSchemaSha256": "fae4b89045e09739906d208cd9b958b831dfaf1351cb518157c4bb039e9b2beb",
           "resourceType": "AWS::Lambda::Function"
+        },
+        {
+          "actions": [
+            "apigateway:DELETE",
+            "apigateway:GET",
+            "apigateway:PATCH",
+            "apigateway:POST",
+            "apigateway:PUT"
+          ],
+          "identityStatus": "planned",
+          "logicalId": "ThnRuntimeApiDeploymenta6d86e6443",
+          "nameOrApprovedGeneratedPrefix": "zoolanding-thn-auth-runtime-production-ThnRuntimeApiDeploymenta6d86e6443-*",
+          "providerSchemaSha256": "a707a4845796a4fedcf15cdcfe7f78e97a87f1d64a74ac846d42c596ef662754",
+          "resourceType": "AWS::ApiGateway::Deployment"
         },
         {
           "actions": [
@@ -2992,7 +3006,7 @@
           ],
           "identityStatus": "planned",
           "logicalId": "ThnAuthRuntimeV2FunctionAliasproduction",
-          "nameOrApprovedGeneratedPrefix": "zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*",
+          "nameOrApprovedGeneratedPrefix": "zlp-thn-auth-runtime-production",
           "providerSchemaSha256": "65275d9c581cbd278fe09768d97eb910c0f742c10d2db5fed2efd8a3c326c744",
           "resourceType": "AWS::Lambda::Alias"
         },
@@ -3010,30 +3024,6 @@
           "nameOrApprovedGeneratedPrefix": "zoolanding-thn-auth-runtime-production-ThnRuntimeApi-*",
           "providerSchemaSha256": "c0f6726787c00d4d346dbe536b1fe3eb5b0e92872b549c462c49b1e96f905bcf",
           "resourceType": "AWS::ApiGateway::RestApi"
-        },
-        {
-          "actions": [
-            "iam:AttachRolePolicy",
-            "iam:CreateRole",
-            "iam:DeleteRole",
-            "iam:DeleteRolePolicy",
-            "iam:DetachRolePolicy",
-            "iam:GetRole",
-            "iam:GetRolePolicy",
-            "iam:ListAttachedRolePolicies",
-            "iam:ListRolePolicies",
-            "iam:PutRolePolicy",
-            "iam:TagRole",
-            "iam:UntagRole",
-            "iam:UpdateAssumeRolePolicy",
-            "iam:UpdateRole",
-            "iam:UpdateRoleDescription"
-          ],
-          "identityStatus": "planned",
-          "logicalId": "ThnAuthRuntimeV2FunctionRole",
-          "nameOrApprovedGeneratedPrefix": "zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2FunctionRole-*",
-          "providerSchemaSha256": "132445caa5ef7af2997d01e8fcf0e851f19ba4a9c7739f1409cbb65d5b333b02",
-          "resourceType": "AWS::IAM::Role"
         },
         {
           "actions": [
@@ -3057,38 +3047,28 @@
           ],
           "identityStatus": "planned",
           "logicalId": "ThnAuthRuntimeV2FunctionRuntimePostPermissionProd",
-          "nameOrApprovedGeneratedPrefix": "zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*",
+          "nameOrApprovedGeneratedPrefix": "zlp-thn-auth-runtime-production",
           "providerSchemaSha256": "73f087cb683efccdc631a6ae1fd6010bbf4dc4d293b24c61327feff04413b2d7",
           "resourceType": "AWS::Lambda::Permission"
         },
         {
           "actions": [
-            "logs:AssociateKmsKey",
-            "logs:CreateLogDelivery",
             "logs:CreateLogGroup",
             "logs:DeleteDataProtectionPolicy",
-            "logs:DeleteIndexPolicy",
             "logs:DeleteLogGroup",
-            "logs:DeleteResourcePolicy",
             "logs:DeleteRetentionPolicy",
             "logs:DescribeIndexPolicies",
             "logs:DescribeLogGroups",
             "logs:DescribeResourcePolicies",
-            "logs:DisassociateKmsKey",
             "logs:GetDataProtectionPolicy",
             "logs:ListTagsForResource",
-            "logs:PutBearerTokenAuthentication",
-            "logs:PutDataProtectionPolicy",
-            "logs:PutIndexPolicy",
-            "logs:PutLogGroupDeletionProtection",
-            "logs:PutResourcePolicy",
             "logs:PutRetentionPolicy",
             "logs:TagResource",
             "logs:UntagResource"
           ],
           "identityStatus": "planned",
           "logicalId": "ThnRuntimeLogGroup",
-          "nameOrApprovedGeneratedPrefix": "/aws/lambda/zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*",
+          "nameOrApprovedGeneratedPrefix": "/aws/lambda/zlp-thn-auth-runtime-production",
           "providerSchemaSha256": "17a8e7c39e56ca828ca767a2ef97e872848adde2bb8f2f3dce1717188522731d",
           "resourceType": "AWS::Logs::LogGroup"
         },
@@ -3100,23 +3080,9 @@
           ],
           "identityStatus": "planned",
           "logicalId": "ThnAuthRuntimeV2FunctionRuntimeGetPermissionProd",
-          "nameOrApprovedGeneratedPrefix": "zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*",
+          "nameOrApprovedGeneratedPrefix": "zlp-thn-auth-runtime-production",
           "providerSchemaSha256": "73f087cb683efccdc631a6ae1fd6010bbf4dc4d293b24c61327feff04413b2d7",
           "resourceType": "AWS::Lambda::Permission"
-        },
-        {
-          "actions": [
-            "apigateway:DELETE",
-            "apigateway:GET",
-            "apigateway:PATCH",
-            "apigateway:POST",
-            "apigateway:PUT"
-          ],
-          "identityStatus": "planned",
-          "logicalId": "ThnRuntimeApiDeployment74f77dac06",
-          "nameOrApprovedGeneratedPrefix": "zoolanding-thn-auth-runtime-production-ThnRuntimeApiDeployment74f77dac06-*",
-          "providerSchemaSha256": "a707a4845796a4fedcf15cdcfe7f78e97a87f1d64a74ac846d42c596ef662754",
-          "resourceType": "AWS::ApiGateway::Deployment"
         },
         {
           "actions": [
@@ -3133,7 +3099,7 @@
           ],
           "identityStatus": "planned",
           "logicalId": "ThnAuthRuntimeV2FunctionVersion799a41329e",
-          "nameOrApprovedGeneratedPrefix": "zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*",
+          "nameOrApprovedGeneratedPrefix": "zlp-thn-auth-runtime-production",
           "providerSchemaSha256": "517a1c628aacf10347138546275ae273a83335488cba74a5cc44a85fcac71620",
           "resourceType": "AWS::Lambda::Version"
         }
@@ -25637,7 +25603,7 @@
       "group": "api",
       "principalArn": "arn:aws:iam::765932874577:role/zoolanding-deployer-thn-auth-runtime-production-github-deploy",
       "resources": [
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*"
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production"
       ]
     },
     {
@@ -25674,7 +25640,7 @@
       "providerSchemaSha256": "fae4b89045e09739906d208cd9b958b831dfaf1351cb518157c4bb039e9b2beb",
       "resourceType": "AWS::Lambda::Function",
       "resources": [
-        "arn:aws:iam::765932874577:role/zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2FunctionRole-*"
+        "arn:aws:iam::765932874577:role/zlp-thn-auth-runtime-prod-role"
       ]
     },
     {
@@ -25694,8 +25660,8 @@
       "providerSchemaSha256": "fae4b89045e09739906d208cd9b958b831dfaf1351cb518157c4bb039e9b2beb",
       "resourceType": "AWS::Lambda::Function",
       "resources": [
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*",
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*:*"
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production",
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production:*"
       ]
     },
     {
@@ -25715,8 +25681,8 @@
       "providerSchemaSha256": "fae4b89045e09739906d208cd9b958b831dfaf1351cb518157c4bb039e9b2beb",
       "resourceType": "AWS::Lambda::Function",
       "resources": [
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*",
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*:*"
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production",
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production:*"
       ]
     },
     {
@@ -25736,8 +25702,8 @@
       "providerSchemaSha256": "fae4b89045e09739906d208cd9b958b831dfaf1351cb518157c4bb039e9b2beb",
       "resourceType": "AWS::Lambda::Function",
       "resources": [
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*",
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*:*"
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production",
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production:*"
       ]
     },
     {
@@ -25757,8 +25723,8 @@
       "providerSchemaSha256": "fae4b89045e09739906d208cd9b958b831dfaf1351cb518157c4bb039e9b2beb",
       "resourceType": "AWS::Lambda::Function",
       "resources": [
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*",
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*:*"
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production",
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production:*"
       ]
     },
     {
@@ -25778,8 +25744,8 @@
       "providerSchemaSha256": "fae4b89045e09739906d208cd9b958b831dfaf1351cb518157c4bb039e9b2beb",
       "resourceType": "AWS::Lambda::Function",
       "resources": [
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*",
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*:*"
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production",
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production:*"
       ]
     },
     {
@@ -25799,8 +25765,8 @@
       "providerSchemaSha256": "fae4b89045e09739906d208cd9b958b831dfaf1351cb518157c4bb039e9b2beb",
       "resourceType": "AWS::Lambda::Function",
       "resources": [
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*",
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*:*"
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production",
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production:*"
       ]
     },
     {
@@ -25820,8 +25786,8 @@
       "providerSchemaSha256": "fae4b89045e09739906d208cd9b958b831dfaf1351cb518157c4bb039e9b2beb",
       "resourceType": "AWS::Lambda::Function",
       "resources": [
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*",
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*:*"
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production",
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production:*"
       ]
     },
     {
@@ -25841,8 +25807,8 @@
       "providerSchemaSha256": "fae4b89045e09739906d208cd9b958b831dfaf1351cb518157c4bb039e9b2beb",
       "resourceType": "AWS::Lambda::Function",
       "resources": [
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*",
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*:*"
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production",
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production:*"
       ]
     },
     {
@@ -25862,8 +25828,8 @@
       "providerSchemaSha256": "fae4b89045e09739906d208cd9b958b831dfaf1351cb518157c4bb039e9b2beb",
       "resourceType": "AWS::Lambda::Function",
       "resources": [
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*",
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*:*"
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production",
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production:*"
       ]
     },
     {
@@ -25883,8 +25849,8 @@
       "providerSchemaSha256": "fae4b89045e09739906d208cd9b958b831dfaf1351cb518157c4bb039e9b2beb",
       "resourceType": "AWS::Lambda::Function",
       "resources": [
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*",
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*:*"
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production",
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production:*"
       ]
     },
     {
@@ -25904,8 +25870,8 @@
       "providerSchemaSha256": "fae4b89045e09739906d208cd9b958b831dfaf1351cb518157c4bb039e9b2beb",
       "resourceType": "AWS::Lambda::Function",
       "resources": [
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*",
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*:*"
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production",
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production:*"
       ]
     },
     {
@@ -25925,8 +25891,8 @@
       "providerSchemaSha256": "fae4b89045e09739906d208cd9b958b831dfaf1351cb518157c4bb039e9b2beb",
       "resourceType": "AWS::Lambda::Function",
       "resources": [
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*",
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*:*"
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production",
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production:*"
       ]
     },
     {
@@ -25946,8 +25912,8 @@
       "providerSchemaSha256": "fae4b89045e09739906d208cd9b958b831dfaf1351cb518157c4bb039e9b2beb",
       "resourceType": "AWS::Lambda::Function",
       "resources": [
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*",
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*:*"
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production",
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production:*"
       ]
     },
     {
@@ -25967,8 +25933,8 @@
       "providerSchemaSha256": "fae4b89045e09739906d208cd9b958b831dfaf1351cb518157c4bb039e9b2beb",
       "resourceType": "AWS::Lambda::Function",
       "resources": [
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*",
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*:*"
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production",
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production:*"
       ]
     },
     {
@@ -25988,8 +25954,8 @@
       "providerSchemaSha256": "fae4b89045e09739906d208cd9b958b831dfaf1351cb518157c4bb039e9b2beb",
       "resourceType": "AWS::Lambda::Function",
       "resources": [
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*",
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*:*"
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production",
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production:*"
       ]
     },
     {
@@ -26009,8 +25975,8 @@
       "providerSchemaSha256": "fae4b89045e09739906d208cd9b958b831dfaf1351cb518157c4bb039e9b2beb",
       "resourceType": "AWS::Lambda::Function",
       "resources": [
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*",
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*:*"
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production",
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production:*"
       ]
     },
     {
@@ -26030,8 +25996,8 @@
       "providerSchemaSha256": "fae4b89045e09739906d208cd9b958b831dfaf1351cb518157c4bb039e9b2beb",
       "resourceType": "AWS::Lambda::Function",
       "resources": [
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*",
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*:*"
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production",
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production:*"
       ]
     },
     {
@@ -26076,6 +26042,111 @@
     },
     {
       "actions": [
+        "apigateway:DELETE"
+      ],
+      "condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "us-east-1"
+        }
+      },
+      "group": "api",
+      "logicalIds": [
+        "ThnRuntimeApiDeploymenta6d86e6443"
+      ],
+      "principalArn": "arn:aws:iam::765932874577:role/zoolanding-deployer-thn-auth-runtime-production-cfn-exec",
+      "providerSchemaSha256": "a707a4845796a4fedcf15cdcfe7f78e97a87f1d64a74ac846d42c596ef662754",
+      "resourceType": "AWS::ApiGateway::Deployment",
+      "resources": [
+        "arn:aws:apigateway:us-east-1::/restapis",
+        "arn:aws:apigateway:us-east-1::/restapis/*"
+      ]
+    },
+    {
+      "actions": [
+        "apigateway:GET"
+      ],
+      "condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "us-east-1"
+        }
+      },
+      "group": "api",
+      "logicalIds": [
+        "ThnRuntimeApiDeploymenta6d86e6443"
+      ],
+      "principalArn": "arn:aws:iam::765932874577:role/zoolanding-deployer-thn-auth-runtime-production-cfn-exec",
+      "providerSchemaSha256": "a707a4845796a4fedcf15cdcfe7f78e97a87f1d64a74ac846d42c596ef662754",
+      "resourceType": "AWS::ApiGateway::Deployment",
+      "resources": [
+        "arn:aws:apigateway:us-east-1::/restapis",
+        "arn:aws:apigateway:us-east-1::/restapis/*"
+      ]
+    },
+    {
+      "actions": [
+        "apigateway:PATCH"
+      ],
+      "condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "us-east-1"
+        }
+      },
+      "group": "api",
+      "logicalIds": [
+        "ThnRuntimeApiDeploymenta6d86e6443"
+      ],
+      "principalArn": "arn:aws:iam::765932874577:role/zoolanding-deployer-thn-auth-runtime-production-cfn-exec",
+      "providerSchemaSha256": "a707a4845796a4fedcf15cdcfe7f78e97a87f1d64a74ac846d42c596ef662754",
+      "resourceType": "AWS::ApiGateway::Deployment",
+      "resources": [
+        "arn:aws:apigateway:us-east-1::/restapis",
+        "arn:aws:apigateway:us-east-1::/restapis/*"
+      ]
+    },
+    {
+      "actions": [
+        "apigateway:POST"
+      ],
+      "condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "us-east-1"
+        }
+      },
+      "group": "api",
+      "logicalIds": [
+        "ThnRuntimeApiDeploymenta6d86e6443"
+      ],
+      "principalArn": "arn:aws:iam::765932874577:role/zoolanding-deployer-thn-auth-runtime-production-cfn-exec",
+      "providerSchemaSha256": "a707a4845796a4fedcf15cdcfe7f78e97a87f1d64a74ac846d42c596ef662754",
+      "resourceType": "AWS::ApiGateway::Deployment",
+      "resources": [
+        "arn:aws:apigateway:us-east-1::/restapis",
+        "arn:aws:apigateway:us-east-1::/restapis/*"
+      ]
+    },
+    {
+      "actions": [
+        "apigateway:PUT"
+      ],
+      "condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "us-east-1"
+        }
+      },
+      "group": "api",
+      "logicalIds": [
+        "ThnRuntimeApiDeploymenta6d86e6443"
+      ],
+      "principalArn": "arn:aws:iam::765932874577:role/zoolanding-deployer-thn-auth-runtime-production-cfn-exec",
+      "providerSchemaSha256": "a707a4845796a4fedcf15cdcfe7f78e97a87f1d64a74ac846d42c596ef662754",
+      "resourceType": "AWS::ApiGateway::Deployment",
+      "resources": [
+        "arn:aws:apigateway:us-east-1::/restapis",
+        "arn:aws:apigateway:us-east-1::/restapis/*"
+      ]
+    },
+    {
+      "actions": [
         "lambda:CreateAlias"
       ],
       "condition": {
@@ -26091,8 +26162,8 @@
       "providerSchemaSha256": "65275d9c581cbd278fe09768d97eb910c0f742c10d2db5fed2efd8a3c326c744",
       "resourceType": "AWS::Lambda::Alias",
       "resources": [
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*",
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*:*"
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production",
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production:*"
       ]
     },
     {
@@ -26112,8 +26183,8 @@
       "providerSchemaSha256": "65275d9c581cbd278fe09768d97eb910c0f742c10d2db5fed2efd8a3c326c744",
       "resourceType": "AWS::Lambda::Alias",
       "resources": [
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*",
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*:*"
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production",
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production:*"
       ]
     },
     {
@@ -26133,8 +26204,8 @@
       "providerSchemaSha256": "65275d9c581cbd278fe09768d97eb910c0f742c10d2db5fed2efd8a3c326c744",
       "resourceType": "AWS::Lambda::Alias",
       "resources": [
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*",
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*:*"
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production",
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production:*"
       ]
     },
     {
@@ -26154,8 +26225,8 @@
       "providerSchemaSha256": "65275d9c581cbd278fe09768d97eb910c0f742c10d2db5fed2efd8a3c326c744",
       "resourceType": "AWS::Lambda::Alias",
       "resources": [
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*",
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*:*"
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production",
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production:*"
       ]
     },
     {
@@ -26175,8 +26246,8 @@
       "providerSchemaSha256": "65275d9c581cbd278fe09768d97eb910c0f742c10d2db5fed2efd8a3c326c744",
       "resourceType": "AWS::Lambda::Alias",
       "resources": [
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*",
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*:*"
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production",
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production:*"
       ]
     },
     {
@@ -26196,8 +26267,8 @@
       "providerSchemaSha256": "65275d9c581cbd278fe09768d97eb910c0f742c10d2db5fed2efd8a3c326c744",
       "resourceType": "AWS::Lambda::Alias",
       "resources": [
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*",
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*:*"
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production",
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production:*"
       ]
     },
     {
@@ -26217,8 +26288,8 @@
       "providerSchemaSha256": "65275d9c581cbd278fe09768d97eb910c0f742c10d2db5fed2efd8a3c326c744",
       "resourceType": "AWS::Lambda::Alias",
       "resources": [
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*",
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*:*"
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production",
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production:*"
       ]
     },
     {
@@ -26349,306 +26420,6 @@
     },
     {
       "actions": [
-        "iam:AttachRolePolicy"
-      ],
-      "condition": {
-        "StringEquals": {
-          "aws:RequestedRegion": "us-east-1"
-        }
-      },
-      "group": "api",
-      "logicalIds": [
-        "ThnAuthRuntimeV2FunctionRole"
-      ],
-      "principalArn": "arn:aws:iam::765932874577:role/zoolanding-deployer-thn-auth-runtime-production-cfn-exec",
-      "providerSchemaSha256": "132445caa5ef7af2997d01e8fcf0e851f19ba4a9c7739f1409cbb65d5b333b02",
-      "resourceType": "AWS::IAM::Role",
-      "resources": [
-        "arn:aws:iam::765932874577:role/zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2FunctionRole-*"
-      ]
-    },
-    {
-      "actions": [
-        "iam:CreateRole"
-      ],
-      "condition": {
-        "StringEquals": {
-          "aws:RequestedRegion": "us-east-1"
-        }
-      },
-      "group": "api",
-      "logicalIds": [
-        "ThnAuthRuntimeV2FunctionRole"
-      ],
-      "principalArn": "arn:aws:iam::765932874577:role/zoolanding-deployer-thn-auth-runtime-production-cfn-exec",
-      "providerSchemaSha256": "132445caa5ef7af2997d01e8fcf0e851f19ba4a9c7739f1409cbb65d5b333b02",
-      "resourceType": "AWS::IAM::Role",
-      "resources": [
-        "arn:aws:iam::765932874577:role/zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2FunctionRole-*"
-      ]
-    },
-    {
-      "actions": [
-        "iam:DeleteRole"
-      ],
-      "condition": {
-        "StringEquals": {
-          "aws:RequestedRegion": "us-east-1"
-        }
-      },
-      "group": "api",
-      "logicalIds": [
-        "ThnAuthRuntimeV2FunctionRole"
-      ],
-      "principalArn": "arn:aws:iam::765932874577:role/zoolanding-deployer-thn-auth-runtime-production-cfn-exec",
-      "providerSchemaSha256": "132445caa5ef7af2997d01e8fcf0e851f19ba4a9c7739f1409cbb65d5b333b02",
-      "resourceType": "AWS::IAM::Role",
-      "resources": [
-        "arn:aws:iam::765932874577:role/zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2FunctionRole-*"
-      ]
-    },
-    {
-      "actions": [
-        "iam:DeleteRolePolicy"
-      ],
-      "condition": {
-        "StringEquals": {
-          "aws:RequestedRegion": "us-east-1"
-        }
-      },
-      "group": "api",
-      "logicalIds": [
-        "ThnAuthRuntimeV2FunctionRole"
-      ],
-      "principalArn": "arn:aws:iam::765932874577:role/zoolanding-deployer-thn-auth-runtime-production-cfn-exec",
-      "providerSchemaSha256": "132445caa5ef7af2997d01e8fcf0e851f19ba4a9c7739f1409cbb65d5b333b02",
-      "resourceType": "AWS::IAM::Role",
-      "resources": [
-        "arn:aws:iam::765932874577:role/zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2FunctionRole-*"
-      ]
-    },
-    {
-      "actions": [
-        "iam:DetachRolePolicy"
-      ],
-      "condition": {
-        "StringEquals": {
-          "aws:RequestedRegion": "us-east-1"
-        }
-      },
-      "group": "api",
-      "logicalIds": [
-        "ThnAuthRuntimeV2FunctionRole"
-      ],
-      "principalArn": "arn:aws:iam::765932874577:role/zoolanding-deployer-thn-auth-runtime-production-cfn-exec",
-      "providerSchemaSha256": "132445caa5ef7af2997d01e8fcf0e851f19ba4a9c7739f1409cbb65d5b333b02",
-      "resourceType": "AWS::IAM::Role",
-      "resources": [
-        "arn:aws:iam::765932874577:role/zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2FunctionRole-*"
-      ]
-    },
-    {
-      "actions": [
-        "iam:GetRole"
-      ],
-      "condition": {
-        "StringEquals": {
-          "aws:RequestedRegion": "us-east-1"
-        }
-      },
-      "group": "api",
-      "logicalIds": [
-        "ThnAuthRuntimeV2FunctionRole"
-      ],
-      "principalArn": "arn:aws:iam::765932874577:role/zoolanding-deployer-thn-auth-runtime-production-cfn-exec",
-      "providerSchemaSha256": "132445caa5ef7af2997d01e8fcf0e851f19ba4a9c7739f1409cbb65d5b333b02",
-      "resourceType": "AWS::IAM::Role",
-      "resources": [
-        "arn:aws:iam::765932874577:role/zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2FunctionRole-*"
-      ]
-    },
-    {
-      "actions": [
-        "iam:GetRolePolicy"
-      ],
-      "condition": {
-        "StringEquals": {
-          "aws:RequestedRegion": "us-east-1"
-        }
-      },
-      "group": "api",
-      "logicalIds": [
-        "ThnAuthRuntimeV2FunctionRole"
-      ],
-      "principalArn": "arn:aws:iam::765932874577:role/zoolanding-deployer-thn-auth-runtime-production-cfn-exec",
-      "providerSchemaSha256": "132445caa5ef7af2997d01e8fcf0e851f19ba4a9c7739f1409cbb65d5b333b02",
-      "resourceType": "AWS::IAM::Role",
-      "resources": [
-        "arn:aws:iam::765932874577:role/zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2FunctionRole-*"
-      ]
-    },
-    {
-      "actions": [
-        "iam:ListAttachedRolePolicies"
-      ],
-      "condition": {
-        "StringEquals": {
-          "aws:RequestedRegion": "us-east-1"
-        }
-      },
-      "group": "api",
-      "logicalIds": [
-        "ThnAuthRuntimeV2FunctionRole"
-      ],
-      "principalArn": "arn:aws:iam::765932874577:role/zoolanding-deployer-thn-auth-runtime-production-cfn-exec",
-      "providerSchemaSha256": "132445caa5ef7af2997d01e8fcf0e851f19ba4a9c7739f1409cbb65d5b333b02",
-      "resourceType": "AWS::IAM::Role",
-      "resources": [
-        "arn:aws:iam::765932874577:role/zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2FunctionRole-*"
-      ]
-    },
-    {
-      "actions": [
-        "iam:ListRolePolicies"
-      ],
-      "condition": {
-        "StringEquals": {
-          "aws:RequestedRegion": "us-east-1"
-        }
-      },
-      "group": "api",
-      "logicalIds": [
-        "ThnAuthRuntimeV2FunctionRole"
-      ],
-      "principalArn": "arn:aws:iam::765932874577:role/zoolanding-deployer-thn-auth-runtime-production-cfn-exec",
-      "providerSchemaSha256": "132445caa5ef7af2997d01e8fcf0e851f19ba4a9c7739f1409cbb65d5b333b02",
-      "resourceType": "AWS::IAM::Role",
-      "resources": [
-        "arn:aws:iam::765932874577:role/zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2FunctionRole-*"
-      ]
-    },
-    {
-      "actions": [
-        "iam:PutRolePolicy"
-      ],
-      "condition": {
-        "StringEquals": {
-          "aws:RequestedRegion": "us-east-1"
-        }
-      },
-      "group": "api",
-      "logicalIds": [
-        "ThnAuthRuntimeV2FunctionRole"
-      ],
-      "principalArn": "arn:aws:iam::765932874577:role/zoolanding-deployer-thn-auth-runtime-production-cfn-exec",
-      "providerSchemaSha256": "132445caa5ef7af2997d01e8fcf0e851f19ba4a9c7739f1409cbb65d5b333b02",
-      "resourceType": "AWS::IAM::Role",
-      "resources": [
-        "arn:aws:iam::765932874577:role/zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2FunctionRole-*"
-      ]
-    },
-    {
-      "actions": [
-        "iam:TagRole"
-      ],
-      "condition": {
-        "StringEquals": {
-          "aws:RequestedRegion": "us-east-1"
-        }
-      },
-      "group": "api",
-      "logicalIds": [
-        "ThnAuthRuntimeV2FunctionRole"
-      ],
-      "principalArn": "arn:aws:iam::765932874577:role/zoolanding-deployer-thn-auth-runtime-production-cfn-exec",
-      "providerSchemaSha256": "132445caa5ef7af2997d01e8fcf0e851f19ba4a9c7739f1409cbb65d5b333b02",
-      "resourceType": "AWS::IAM::Role",
-      "resources": [
-        "arn:aws:iam::765932874577:role/zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2FunctionRole-*"
-      ]
-    },
-    {
-      "actions": [
-        "iam:UntagRole"
-      ],
-      "condition": {
-        "StringEquals": {
-          "aws:RequestedRegion": "us-east-1"
-        }
-      },
-      "group": "api",
-      "logicalIds": [
-        "ThnAuthRuntimeV2FunctionRole"
-      ],
-      "principalArn": "arn:aws:iam::765932874577:role/zoolanding-deployer-thn-auth-runtime-production-cfn-exec",
-      "providerSchemaSha256": "132445caa5ef7af2997d01e8fcf0e851f19ba4a9c7739f1409cbb65d5b333b02",
-      "resourceType": "AWS::IAM::Role",
-      "resources": [
-        "arn:aws:iam::765932874577:role/zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2FunctionRole-*"
-      ]
-    },
-    {
-      "actions": [
-        "iam:UpdateAssumeRolePolicy"
-      ],
-      "condition": {
-        "StringEquals": {
-          "aws:RequestedRegion": "us-east-1"
-        }
-      },
-      "group": "api",
-      "logicalIds": [
-        "ThnAuthRuntimeV2FunctionRole"
-      ],
-      "principalArn": "arn:aws:iam::765932874577:role/zoolanding-deployer-thn-auth-runtime-production-cfn-exec",
-      "providerSchemaSha256": "132445caa5ef7af2997d01e8fcf0e851f19ba4a9c7739f1409cbb65d5b333b02",
-      "resourceType": "AWS::IAM::Role",
-      "resources": [
-        "arn:aws:iam::765932874577:role/zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2FunctionRole-*"
-      ]
-    },
-    {
-      "actions": [
-        "iam:UpdateRole"
-      ],
-      "condition": {
-        "StringEquals": {
-          "aws:RequestedRegion": "us-east-1"
-        }
-      },
-      "group": "api",
-      "logicalIds": [
-        "ThnAuthRuntimeV2FunctionRole"
-      ],
-      "principalArn": "arn:aws:iam::765932874577:role/zoolanding-deployer-thn-auth-runtime-production-cfn-exec",
-      "providerSchemaSha256": "132445caa5ef7af2997d01e8fcf0e851f19ba4a9c7739f1409cbb65d5b333b02",
-      "resourceType": "AWS::IAM::Role",
-      "resources": [
-        "arn:aws:iam::765932874577:role/zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2FunctionRole-*"
-      ]
-    },
-    {
-      "actions": [
-        "iam:UpdateRoleDescription"
-      ],
-      "condition": {
-        "StringEquals": {
-          "aws:RequestedRegion": "us-east-1"
-        }
-      },
-      "group": "api",
-      "logicalIds": [
-        "ThnAuthRuntimeV2FunctionRole"
-      ],
-      "principalArn": "arn:aws:iam::765932874577:role/zoolanding-deployer-thn-auth-runtime-production-cfn-exec",
-      "providerSchemaSha256": "132445caa5ef7af2997d01e8fcf0e851f19ba4a9c7739f1409cbb65d5b333b02",
-      "resourceType": "AWS::IAM::Role",
-      "resources": [
-        "arn:aws:iam::765932874577:role/zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2FunctionRole-*"
-      ]
-    },
-    {
-      "actions": [
         "apigateway:DELETE"
       ],
       "condition": {
@@ -26770,8 +26541,8 @@
       "providerSchemaSha256": "73f087cb683efccdc631a6ae1fd6010bbf4dc4d293b24c61327feff04413b2d7",
       "resourceType": "AWS::Lambda::Permission",
       "resources": [
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*",
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*:*"
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production",
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production:*"
       ]
     },
     {
@@ -26792,8 +26563,8 @@
       "providerSchemaSha256": "73f087cb683efccdc631a6ae1fd6010bbf4dc4d293b24c61327feff04413b2d7",
       "resourceType": "AWS::Lambda::Permission",
       "resources": [
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*",
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*:*"
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production",
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production:*"
       ]
     },
     {
@@ -26814,48 +26585,8 @@
       "providerSchemaSha256": "73f087cb683efccdc631a6ae1fd6010bbf4dc4d293b24c61327feff04413b2d7",
       "resourceType": "AWS::Lambda::Permission",
       "resources": [
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*",
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*:*"
-      ]
-    },
-    {
-      "actions": [
-        "logs:AssociateKmsKey"
-      ],
-      "condition": {
-        "StringEquals": {
-          "aws:RequestedRegion": "us-east-1"
-        }
-      },
-      "group": "api",
-      "logicalIds": [
-        "ThnRuntimeLogGroup"
-      ],
-      "principalArn": "arn:aws:iam::765932874577:role/zoolanding-deployer-thn-auth-runtime-production-cfn-exec",
-      "providerSchemaSha256": "17a8e7c39e56ca828ca767a2ef97e872848adde2bb8f2f3dce1717188522731d",
-      "resourceType": "AWS::Logs::LogGroup",
-      "resources": [
-        "arn:aws:logs:us-east-1:765932874577:log-group:/aws/lambda/zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*:*"
-      ]
-    },
-    {
-      "actions": [
-        "logs:CreateLogDelivery"
-      ],
-      "condition": {
-        "StringEquals": {
-          "aws:RequestedRegion": "us-east-1"
-        }
-      },
-      "group": "api",
-      "logicalIds": [
-        "ThnRuntimeLogGroup"
-      ],
-      "principalArn": "arn:aws:iam::765932874577:role/zoolanding-deployer-thn-auth-runtime-production-cfn-exec",
-      "providerSchemaSha256": "17a8e7c39e56ca828ca767a2ef97e872848adde2bb8f2f3dce1717188522731d",
-      "resourceType": "AWS::Logs::LogGroup",
-      "resources": [
-        "arn:aws:logs:us-east-1:765932874577:log-group:/aws/lambda/zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*:*"
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production",
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production:*"
       ]
     },
     {
@@ -26875,7 +26606,7 @@
       "providerSchemaSha256": "17a8e7c39e56ca828ca767a2ef97e872848adde2bb8f2f3dce1717188522731d",
       "resourceType": "AWS::Logs::LogGroup",
       "resources": [
-        "arn:aws:logs:us-east-1:765932874577:log-group:/aws/lambda/zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*:*"
+        "arn:aws:logs:us-east-1:765932874577:log-group:/aws/lambda/zlp-thn-auth-runtime-production:*"
       ]
     },
     {
@@ -26895,27 +26626,7 @@
       "providerSchemaSha256": "17a8e7c39e56ca828ca767a2ef97e872848adde2bb8f2f3dce1717188522731d",
       "resourceType": "AWS::Logs::LogGroup",
       "resources": [
-        "arn:aws:logs:us-east-1:765932874577:log-group:/aws/lambda/zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*:*"
-      ]
-    },
-    {
-      "actions": [
-        "logs:DeleteIndexPolicy"
-      ],
-      "condition": {
-        "StringEquals": {
-          "aws:RequestedRegion": "us-east-1"
-        }
-      },
-      "group": "api",
-      "logicalIds": [
-        "ThnRuntimeLogGroup"
-      ],
-      "principalArn": "arn:aws:iam::765932874577:role/zoolanding-deployer-thn-auth-runtime-production-cfn-exec",
-      "providerSchemaSha256": "17a8e7c39e56ca828ca767a2ef97e872848adde2bb8f2f3dce1717188522731d",
-      "resourceType": "AWS::Logs::LogGroup",
-      "resources": [
-        "arn:aws:logs:us-east-1:765932874577:log-group:/aws/lambda/zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*:*"
+        "arn:aws:logs:us-east-1:765932874577:log-group:/aws/lambda/zlp-thn-auth-runtime-production:*"
       ]
     },
     {
@@ -26935,27 +26646,7 @@
       "providerSchemaSha256": "17a8e7c39e56ca828ca767a2ef97e872848adde2bb8f2f3dce1717188522731d",
       "resourceType": "AWS::Logs::LogGroup",
       "resources": [
-        "arn:aws:logs:us-east-1:765932874577:log-group:/aws/lambda/zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*:*"
-      ]
-    },
-    {
-      "actions": [
-        "logs:DeleteResourcePolicy"
-      ],
-      "condition": {
-        "StringEquals": {
-          "aws:RequestedRegion": "us-east-1"
-        }
-      },
-      "group": "api",
-      "logicalIds": [
-        "ThnRuntimeLogGroup"
-      ],
-      "principalArn": "arn:aws:iam::765932874577:role/zoolanding-deployer-thn-auth-runtime-production-cfn-exec",
-      "providerSchemaSha256": "17a8e7c39e56ca828ca767a2ef97e872848adde2bb8f2f3dce1717188522731d",
-      "resourceType": "AWS::Logs::LogGroup",
-      "resources": [
-        "arn:aws:logs:us-east-1:765932874577:log-group:/aws/lambda/zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*:*"
+        "arn:aws:logs:us-east-1:765932874577:log-group:/aws/lambda/zlp-thn-auth-runtime-production:*"
       ]
     },
     {
@@ -26975,7 +26666,7 @@
       "providerSchemaSha256": "17a8e7c39e56ca828ca767a2ef97e872848adde2bb8f2f3dce1717188522731d",
       "resourceType": "AWS::Logs::LogGroup",
       "resources": [
-        "arn:aws:logs:us-east-1:765932874577:log-group:/aws/lambda/zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*:*"
+        "arn:aws:logs:us-east-1:765932874577:log-group:/aws/lambda/zlp-thn-auth-runtime-production:*"
       ]
     },
     {
@@ -27040,26 +26731,6 @@
     },
     {
       "actions": [
-        "logs:DisassociateKmsKey"
-      ],
-      "condition": {
-        "StringEquals": {
-          "aws:RequestedRegion": "us-east-1"
-        }
-      },
-      "group": "api",
-      "logicalIds": [
-        "ThnRuntimeLogGroup"
-      ],
-      "principalArn": "arn:aws:iam::765932874577:role/zoolanding-deployer-thn-auth-runtime-production-cfn-exec",
-      "providerSchemaSha256": "17a8e7c39e56ca828ca767a2ef97e872848adde2bb8f2f3dce1717188522731d",
-      "resourceType": "AWS::Logs::LogGroup",
-      "resources": [
-        "arn:aws:logs:us-east-1:765932874577:log-group:/aws/lambda/zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*:*"
-      ]
-    },
-    {
-      "actions": [
         "logs:GetDataProtectionPolicy"
       ],
       "condition": {
@@ -27075,7 +26746,7 @@
       "providerSchemaSha256": "17a8e7c39e56ca828ca767a2ef97e872848adde2bb8f2f3dce1717188522731d",
       "resourceType": "AWS::Logs::LogGroup",
       "resources": [
-        "arn:aws:logs:us-east-1:765932874577:log-group:/aws/lambda/zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*:*"
+        "arn:aws:logs:us-east-1:765932874577:log-group:/aws/lambda/zlp-thn-auth-runtime-production:*"
       ]
     },
     {
@@ -27095,107 +26766,7 @@
       "providerSchemaSha256": "17a8e7c39e56ca828ca767a2ef97e872848adde2bb8f2f3dce1717188522731d",
       "resourceType": "AWS::Logs::LogGroup",
       "resources": [
-        "arn:aws:logs:us-east-1:765932874577:log-group:/aws/lambda/zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*:*"
-      ]
-    },
-    {
-      "actions": [
-        "logs:PutBearerTokenAuthentication"
-      ],
-      "condition": {
-        "StringEquals": {
-          "aws:RequestedRegion": "us-east-1"
-        }
-      },
-      "group": "api",
-      "logicalIds": [
-        "ThnRuntimeLogGroup"
-      ],
-      "principalArn": "arn:aws:iam::765932874577:role/zoolanding-deployer-thn-auth-runtime-production-cfn-exec",
-      "providerSchemaSha256": "17a8e7c39e56ca828ca767a2ef97e872848adde2bb8f2f3dce1717188522731d",
-      "resourceType": "AWS::Logs::LogGroup",
-      "resources": [
-        "arn:aws:logs:us-east-1:765932874577:log-group:/aws/lambda/zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*:*"
-      ]
-    },
-    {
-      "actions": [
-        "logs:PutDataProtectionPolicy"
-      ],
-      "condition": {
-        "StringEquals": {
-          "aws:RequestedRegion": "us-east-1"
-        }
-      },
-      "group": "api",
-      "logicalIds": [
-        "ThnRuntimeLogGroup"
-      ],
-      "principalArn": "arn:aws:iam::765932874577:role/zoolanding-deployer-thn-auth-runtime-production-cfn-exec",
-      "providerSchemaSha256": "17a8e7c39e56ca828ca767a2ef97e872848adde2bb8f2f3dce1717188522731d",
-      "resourceType": "AWS::Logs::LogGroup",
-      "resources": [
-        "arn:aws:logs:us-east-1:765932874577:log-group:/aws/lambda/zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*:*"
-      ]
-    },
-    {
-      "actions": [
-        "logs:PutIndexPolicy"
-      ],
-      "condition": {
-        "StringEquals": {
-          "aws:RequestedRegion": "us-east-1"
-        }
-      },
-      "group": "api",
-      "logicalIds": [
-        "ThnRuntimeLogGroup"
-      ],
-      "principalArn": "arn:aws:iam::765932874577:role/zoolanding-deployer-thn-auth-runtime-production-cfn-exec",
-      "providerSchemaSha256": "17a8e7c39e56ca828ca767a2ef97e872848adde2bb8f2f3dce1717188522731d",
-      "resourceType": "AWS::Logs::LogGroup",
-      "resources": [
-        "arn:aws:logs:us-east-1:765932874577:log-group:/aws/lambda/zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*:*"
-      ]
-    },
-    {
-      "actions": [
-        "logs:PutLogGroupDeletionProtection"
-      ],
-      "condition": {
-        "StringEquals": {
-          "aws:RequestedRegion": "us-east-1"
-        }
-      },
-      "group": "api",
-      "logicalIds": [
-        "ThnRuntimeLogGroup"
-      ],
-      "principalArn": "arn:aws:iam::765932874577:role/zoolanding-deployer-thn-auth-runtime-production-cfn-exec",
-      "providerSchemaSha256": "17a8e7c39e56ca828ca767a2ef97e872848adde2bb8f2f3dce1717188522731d",
-      "resourceType": "AWS::Logs::LogGroup",
-      "resources": [
-        "arn:aws:logs:us-east-1:765932874577:log-group:/aws/lambda/zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*:*"
-      ]
-    },
-    {
-      "actions": [
-        "logs:PutResourcePolicy"
-      ],
-      "condition": {
-        "StringEquals": {
-          "aws:RequestedRegion": "us-east-1"
-        }
-      },
-      "group": "api",
-      "logicalIds": [
-        "ThnRuntimeLogGroup"
-      ],
-      "principalArn": "arn:aws:iam::765932874577:role/zoolanding-deployer-thn-auth-runtime-production-cfn-exec",
-      "providerSchemaSha256": "17a8e7c39e56ca828ca767a2ef97e872848adde2bb8f2f3dce1717188522731d",
-      "resourceType": "AWS::Logs::LogGroup",
-      "resources": [
-        "arn:aws:logs:us-east-1:765932874577:log-group:/aws/lambda/zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*:*"
+        "arn:aws:logs:us-east-1:765932874577:log-group:/aws/lambda/zlp-thn-auth-runtime-production:*"
       ]
     },
     {
@@ -27215,7 +26786,7 @@
       "providerSchemaSha256": "17a8e7c39e56ca828ca767a2ef97e872848adde2bb8f2f3dce1717188522731d",
       "resourceType": "AWS::Logs::LogGroup",
       "resources": [
-        "arn:aws:logs:us-east-1:765932874577:log-group:/aws/lambda/zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*:*"
+        "arn:aws:logs:us-east-1:765932874577:log-group:/aws/lambda/zlp-thn-auth-runtime-production:*"
       ]
     },
     {
@@ -27235,7 +26806,7 @@
       "providerSchemaSha256": "17a8e7c39e56ca828ca767a2ef97e872848adde2bb8f2f3dce1717188522731d",
       "resourceType": "AWS::Logs::LogGroup",
       "resources": [
-        "arn:aws:logs:us-east-1:765932874577:log-group:/aws/lambda/zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*:*"
+        "arn:aws:logs:us-east-1:765932874577:log-group:/aws/lambda/zlp-thn-auth-runtime-production:*"
       ]
     },
     {
@@ -27255,112 +26826,7 @@
       "providerSchemaSha256": "17a8e7c39e56ca828ca767a2ef97e872848adde2bb8f2f3dce1717188522731d",
       "resourceType": "AWS::Logs::LogGroup",
       "resources": [
-        "arn:aws:logs:us-east-1:765932874577:log-group:/aws/lambda/zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*:*"
-      ]
-    },
-    {
-      "actions": [
-        "apigateway:DELETE"
-      ],
-      "condition": {
-        "StringEquals": {
-          "aws:RequestedRegion": "us-east-1"
-        }
-      },
-      "group": "api",
-      "logicalIds": [
-        "ThnRuntimeApiDeployment74f77dac06"
-      ],
-      "principalArn": "arn:aws:iam::765932874577:role/zoolanding-deployer-thn-auth-runtime-production-cfn-exec",
-      "providerSchemaSha256": "a707a4845796a4fedcf15cdcfe7f78e97a87f1d64a74ac846d42c596ef662754",
-      "resourceType": "AWS::ApiGateway::Deployment",
-      "resources": [
-        "arn:aws:apigateway:us-east-1::/restapis",
-        "arn:aws:apigateway:us-east-1::/restapis/*"
-      ]
-    },
-    {
-      "actions": [
-        "apigateway:GET"
-      ],
-      "condition": {
-        "StringEquals": {
-          "aws:RequestedRegion": "us-east-1"
-        }
-      },
-      "group": "api",
-      "logicalIds": [
-        "ThnRuntimeApiDeployment74f77dac06"
-      ],
-      "principalArn": "arn:aws:iam::765932874577:role/zoolanding-deployer-thn-auth-runtime-production-cfn-exec",
-      "providerSchemaSha256": "a707a4845796a4fedcf15cdcfe7f78e97a87f1d64a74ac846d42c596ef662754",
-      "resourceType": "AWS::ApiGateway::Deployment",
-      "resources": [
-        "arn:aws:apigateway:us-east-1::/restapis",
-        "arn:aws:apigateway:us-east-1::/restapis/*"
-      ]
-    },
-    {
-      "actions": [
-        "apigateway:PATCH"
-      ],
-      "condition": {
-        "StringEquals": {
-          "aws:RequestedRegion": "us-east-1"
-        }
-      },
-      "group": "api",
-      "logicalIds": [
-        "ThnRuntimeApiDeployment74f77dac06"
-      ],
-      "principalArn": "arn:aws:iam::765932874577:role/zoolanding-deployer-thn-auth-runtime-production-cfn-exec",
-      "providerSchemaSha256": "a707a4845796a4fedcf15cdcfe7f78e97a87f1d64a74ac846d42c596ef662754",
-      "resourceType": "AWS::ApiGateway::Deployment",
-      "resources": [
-        "arn:aws:apigateway:us-east-1::/restapis",
-        "arn:aws:apigateway:us-east-1::/restapis/*"
-      ]
-    },
-    {
-      "actions": [
-        "apigateway:POST"
-      ],
-      "condition": {
-        "StringEquals": {
-          "aws:RequestedRegion": "us-east-1"
-        }
-      },
-      "group": "api",
-      "logicalIds": [
-        "ThnRuntimeApiDeployment74f77dac06"
-      ],
-      "principalArn": "arn:aws:iam::765932874577:role/zoolanding-deployer-thn-auth-runtime-production-cfn-exec",
-      "providerSchemaSha256": "a707a4845796a4fedcf15cdcfe7f78e97a87f1d64a74ac846d42c596ef662754",
-      "resourceType": "AWS::ApiGateway::Deployment",
-      "resources": [
-        "arn:aws:apigateway:us-east-1::/restapis",
-        "arn:aws:apigateway:us-east-1::/restapis/*"
-      ]
-    },
-    {
-      "actions": [
-        "apigateway:PUT"
-      ],
-      "condition": {
-        "StringEquals": {
-          "aws:RequestedRegion": "us-east-1"
-        }
-      },
-      "group": "api",
-      "logicalIds": [
-        "ThnRuntimeApiDeployment74f77dac06"
-      ],
-      "principalArn": "arn:aws:iam::765932874577:role/zoolanding-deployer-thn-auth-runtime-production-cfn-exec",
-      "providerSchemaSha256": "a707a4845796a4fedcf15cdcfe7f78e97a87f1d64a74ac846d42c596ef662754",
-      "resourceType": "AWS::ApiGateway::Deployment",
-      "resources": [
-        "arn:aws:apigateway:us-east-1::/restapis",
-        "arn:aws:apigateway:us-east-1::/restapis/*"
+        "arn:aws:logs:us-east-1:765932874577:log-group:/aws/lambda/zlp-thn-auth-runtime-production:*"
       ]
     },
     {
@@ -27380,8 +26846,8 @@
       "providerSchemaSha256": "517a1c628aacf10347138546275ae273a83335488cba74a5cc44a85fcac71620",
       "resourceType": "AWS::Lambda::Version",
       "resources": [
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*",
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*:*"
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production",
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production:*"
       ]
     },
     {
@@ -27401,8 +26867,8 @@
       "providerSchemaSha256": "517a1c628aacf10347138546275ae273a83335488cba74a5cc44a85fcac71620",
       "resourceType": "AWS::Lambda::Version",
       "resources": [
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*",
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*:*"
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production",
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production:*"
       ]
     },
     {
@@ -27422,8 +26888,8 @@
       "providerSchemaSha256": "517a1c628aacf10347138546275ae273a83335488cba74a5cc44a85fcac71620",
       "resourceType": "AWS::Lambda::Version",
       "resources": [
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*",
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*:*"
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production",
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production:*"
       ]
     },
     {
@@ -27443,8 +26909,8 @@
       "providerSchemaSha256": "517a1c628aacf10347138546275ae273a83335488cba74a5cc44a85fcac71620",
       "resourceType": "AWS::Lambda::Version",
       "resources": [
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*",
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*:*"
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production",
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production:*"
       ]
     },
     {
@@ -27464,8 +26930,8 @@
       "providerSchemaSha256": "517a1c628aacf10347138546275ae273a83335488cba74a5cc44a85fcac71620",
       "resourceType": "AWS::Lambda::Version",
       "resources": [
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*",
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*:*"
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production",
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production:*"
       ]
     },
     {
@@ -27485,8 +26951,8 @@
       "providerSchemaSha256": "517a1c628aacf10347138546275ae273a83335488cba74a5cc44a85fcac71620",
       "resourceType": "AWS::Lambda::Version",
       "resources": [
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*",
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*:*"
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production",
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production:*"
       ]
     },
     {
@@ -27506,8 +26972,8 @@
       "providerSchemaSha256": "517a1c628aacf10347138546275ae273a83335488cba74a5cc44a85fcac71620",
       "resourceType": "AWS::Lambda::Version",
       "resources": [
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*",
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*:*"
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production",
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production:*"
       ]
     },
     {
@@ -27527,8 +26993,8 @@
       "providerSchemaSha256": "517a1c628aacf10347138546275ae273a83335488cba74a5cc44a85fcac71620",
       "resourceType": "AWS::Lambda::Version",
       "resources": [
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*",
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*:*"
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production",
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production:*"
       ]
     },
     {
@@ -27548,8 +27014,8 @@
       "providerSchemaSha256": "517a1c628aacf10347138546275ae273a83335488cba74a5cc44a85fcac71620",
       "resourceType": "AWS::Lambda::Version",
       "resources": [
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*",
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*:*"
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production",
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production:*"
       ]
     },
     {
@@ -27569,8 +27035,8 @@
       "providerSchemaSha256": "517a1c628aacf10347138546275ae273a83335488cba74a5cc44a85fcac71620",
       "resourceType": "AWS::Lambda::Version",
       "resources": [
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*",
-        "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*:*"
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production",
+        "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production:*"
       ]
     },
     {
@@ -30825,8 +30291,8 @@
   "schemaVersion": 1,
   "sourceCandidateHashes": {
     "api": {
-      "nativeProjectionSha256": "4a82810091a107ff487e7530c586ecd04044bfdf61dede0eb9aceaa4394de0fd",
-      "preparedSourceSha256": "6bd1fa1b270ed4b4768445a9cbf25e1466e54b533dc2ad5669bdc33419fc3dcd"
+      "nativeProjectionSha256": "38fc332c85eb29641ee90c83aaad82d70924ef01c40928cfa09d9fdeea04349f",
+      "preparedSourceSha256": "8ebbe915208e417fdc2148f84113f842a510e0a68eb6035761a1d50b20fa8bfb"
     },
     "apiGeneral": {
       "nativeProjectionSha256": "b4261dde94c1f76fe93b94b3d4cc5206f9c6ab2dea0ab92a6f8cdad530174757",
@@ -30912,7 +30378,7 @@
                 },
                 "Effect": "Allow",
                 "Resource": [
-                  "arn:aws:iam::765932874577:role/zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2FunctionRole-*"
+                  "arn:aws:iam::765932874577:role/zlp-thn-auth-runtime-prod-role"
                 ]
               },
               {
@@ -30954,8 +30420,8 @@
                 },
                 "Effect": "Allow",
                 "Resource": [
-                  "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*",
-                  "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*:*"
+                  "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production",
+                  "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production:*"
                 ]
               },
               {
@@ -30995,50 +30461,12 @@
               },
               {
                 "Action": [
-                  "iam:AttachRolePolicy",
-                  "iam:CreateRole",
-                  "iam:DeleteRole",
-                  "iam:DeleteRolePolicy",
-                  "iam:DetachRolePolicy",
-                  "iam:GetRole",
-                  "iam:GetRolePolicy",
-                  "iam:ListAttachedRolePolicies",
-                  "iam:ListRolePolicies",
-                  "iam:PutRolePolicy",
-                  "iam:TagRole",
-                  "iam:UntagRole",
-                  "iam:UpdateAssumeRolePolicy",
-                  "iam:UpdateRole",
-                  "iam:UpdateRoleDescription"
-                ],
-                "Condition": {
-                  "StringEquals": {
-                    "aws:RequestedRegion": "us-east-1"
-                  }
-                },
-                "Effect": "Allow",
-                "Resource": [
-                  "arn:aws:iam::765932874577:role/zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2FunctionRole-*"
-                ]
-              },
-              {
-                "Action": [
-                  "logs:AssociateKmsKey",
-                  "logs:CreateLogDelivery",
                   "logs:CreateLogGroup",
                   "logs:DeleteDataProtectionPolicy",
-                  "logs:DeleteIndexPolicy",
                   "logs:DeleteLogGroup",
-                  "logs:DeleteResourcePolicy",
                   "logs:DeleteRetentionPolicy",
-                  "logs:DisassociateKmsKey",
                   "logs:GetDataProtectionPolicy",
                   "logs:ListTagsForResource",
-                  "logs:PutBearerTokenAuthentication",
-                  "logs:PutDataProtectionPolicy",
-                  "logs:PutIndexPolicy",
-                  "logs:PutLogGroupDeletionProtection",
-                  "logs:PutResourcePolicy",
                   "logs:PutRetentionPolicy",
                   "logs:TagResource",
                   "logs:UntagResource"
@@ -31050,7 +30478,7 @@
                 },
                 "Effect": "Allow",
                 "Resource": [
-                  "arn:aws:logs:us-east-1:765932874577:log-group:/aws/lambda/zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*:*"
+                  "arn:aws:logs:us-east-1:765932874577:log-group:/aws/lambda/zlp-thn-auth-runtime-production:*"
                 ]
               },
               {
@@ -31673,7 +31101,7 @@
                 ],
                 "Effect": "Allow",
                 "Resource": [
-                  "arn:aws:lambda:us-east-1:765932874577:function:zoolanding-thn-auth-runtime-production-ThnAuthRuntimeV2Function-*"
+                  "arn:aws:lambda:us-east-1:765932874577:function:zlp-thn-auth-runtime-production"
                 ]
               },
               {
@@ -31703,6 +31131,66 @@
           ]
         },
         "Type": "AWS::IAM::Policy",
+        "UpdateReplacePolicy": "Retain"
+      },
+      "ApiRuntimeRole": {
+        "DeletionPolicy": "Retain",
+        "Properties": {
+          "AssumeRolePolicyDocument": {
+            "Statement": [
+              {
+                "Action": "sts:AssumeRole",
+                "Effect": "Allow",
+                "Principal": {
+                  "Service": "lambda.amazonaws.com"
+                }
+              }
+            ],
+            "Version": "2012-10-17"
+          },
+          "MaxSessionDuration": 3600,
+          "Policies": [
+            {
+              "PolicyDocument": {
+                "Statement": [
+                  {
+                    "Action": [
+                      "dynamodb:GetItem"
+                    ],
+                    "Condition": {
+                      "ForAllValues:StringEquals": {
+                        "dynamodb:LeadingKeys": [
+                          "SERVICE_BINDING#production#thn-journal-production-v2"
+                        ]
+                      },
+                      "Null": {
+                        "dynamodb:LeadingKeys": "false"
+                      }
+                    },
+                    "Effect": "Allow",
+                    "Resource": [
+                      "arn:aws:dynamodb:us-east-1:765932874577:table/zoolanding-content-hub-prod-ServiceBindingRegistryV2"
+                    ]
+                  },
+                  {
+                    "Action": [
+                      "logs:CreateLogStream",
+                      "logs:PutLogEvents"
+                    ],
+                    "Effect": "Allow",
+                    "Resource": [
+                      "arn:aws:logs:us-east-1:765932874577:log-group:/aws/lambda/zlp-thn-auth-runtime-production:*"
+                    ]
+                  }
+                ],
+                "Version": "2012-10-17"
+              },
+              "PolicyName": "ThnExactProductionRegistryRuntimeRead"
+            }
+          ],
+          "RoleName": "zlp-thn-auth-runtime-prod-role"
+        },
+        "Type": "AWS::IAM::Role",
         "UpdateReplacePolicy": "Retain"
       },
       "ApiVerifiedOwnerMetadataPolicy": {
