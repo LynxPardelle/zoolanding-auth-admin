@@ -421,15 +421,25 @@ def owner_change_set_request(current, *, run_id, attempt):
              isinstance(attempt, str) and re.fullmatch(r'[0-9]{1,4}', attempt),
              'production_owner_run_invalid')
     validate_owner_templates(current.get('original'), current.get('processed'))
+    assert_deployed_template_fingerprints(current['original'], current['processed'])
+    try:
+        template_body = json.dumps(current['original'], separators=(',', ':'),
+                                   allow_nan=False)
+    except (TypeError, ValueError) as exc:
+        raise OwnerReleaseError('production_owner_template_invalid') from exc
+    _require(len(template_body.encode('utf-8')) <= 51200,
+             'production_owner_template_body_too_large')
+    _require(sha(parse_owner_template(template_body)) == sha(current['original']),
+             'production_owner_template_body_changed')
     selected = owner_parameters(current['original']['Parameters'],
                                 current.get('parameters'))
     return {
         'StackName': current['stackId'],
         'ChangeSetName': f'thn-production-auth-owner-{run_id}-{attempt}',
         'ChangeSetType': 'UPDATE',
-        'UsePreviousTemplate': True,
+        'TemplateBody': template_body,
         'Parameters': selected,
-        'Capabilities': ['CAPABILITY_NAMED_IAM'],
+        'Capabilities': ['CAPABILITY_NAMED_IAM', 'CAPABILITY_AUTO_EXPAND'],
         'RoleARN': current['roleArn'],
         'Tags': current['tags'],
     }
@@ -486,7 +496,11 @@ def validate_owner_preview(preview, current, original, processed):
              preview.get('ExecutionStatus') == 'AVAILABLE' and
              preview.get('StackId') == current.get('stackId') and
              (preview.get('RoleARN') in (None, current.get('roleArn'))) and
-             (preview.get('Capabilities') in (None, ['CAPABILITY_NAMED_IAM'])),
+             (preview.get('Capabilities') is None or
+              (isinstance(preview['Capabilities'], list) and
+               len(preview['Capabilities']) == 2 and
+               set(preview['Capabilities']) ==
+               {'CAPABILITY_NAMED_IAM', 'CAPABILITY_AUTO_EXPAND'})),
              'production_owner_preview_identity_invalid')
     validate_owner_templates(original, processed)
     _require(sha(original) == sha(current.get('original')) and

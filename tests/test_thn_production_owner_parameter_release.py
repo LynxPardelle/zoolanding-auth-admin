@@ -5,6 +5,7 @@ import unittest
 from unittest.mock import patch
 
 from tools import thn_production_owner_parameter_release as owner
+from tools.thn_production_release import sha
 
 
 class OwnerParameterGuards(unittest.TestCase):
@@ -57,6 +58,12 @@ class OwnerParameterGuards(unittest.TestCase):
             {'ParameterKey': 'EnableThnAuthAdminV2', 'ParameterValue': 'false'},
             {'ParameterKey': 'LegacySecret', 'ParameterValue': '****'},
         ]
+        original_pin = patch.object(owner, 'APPROVED_ORIGINAL_SHA', sha(self.original))
+        processed_pin = patch.object(owner, 'APPROVED_PROCESSED_SHA', sha(self.processed))
+        original_pin.start()
+        processed_pin.start()
+        self.addCleanup(original_pin.stop)
+        self.addCleanup(processed_pin.stop)
 
     def test_exact_three_overrides_keep_every_other_value_previous(self):
         selected = owner.owner_parameters(self.original['Parameters'], self.current)
@@ -226,7 +233,7 @@ class OwnerParameterGuards(unittest.TestCase):
         self.assertFalse(owner.is_owner_manifest_row({'resourceType': 'AWS::IAM::Role',
             'logicalIds': ['ThnProductionOwnerOperatorV2FunctionVersionbb9bb6a892']}))
 
-    def test_change_set_request_reuses_deployed_template_and_only_three_values(self):
+    def test_change_set_request_sends_exact_original_and_only_three_values(self):
         stack_id = 'arn:aws:cloudformation:us-east-1:765932874577:stack/' \
                    'zoolanding-auth-admin-prod/11111111-1111-1111-1111-111111111111'
         current = {'stackId': stack_id, 'status': 'UPDATE_COMPLETE',
@@ -239,10 +246,13 @@ class OwnerParameterGuards(unittest.TestCase):
                                   'PhysicalResourceId': f'existing-{i}'} for i in range(37)]}
         request = owner.owner_change_set_request(current, run_id='12345', attempt='1')
         self.assertEqual(request['StackName'], stack_id)
-        self.assertTrue(request['UsePreviousTemplate'])
-        self.assertNotIn('TemplateBody', request)
+        self.assertNotIn('UsePreviousTemplate', request)
         self.assertNotIn('TemplateURL', request)
-        self.assertEqual(request['Capabilities'], ['CAPABILITY_NAMED_IAM'])
+        self.assertEqual(json.loads(request['TemplateBody']), current['original'])
+        self.assertEqual(sha(json.loads(request['TemplateBody'])), sha(current['original']))
+        self.assertLessEqual(len(request['TemplateBody'].encode('utf-8')), 51200)
+        self.assertEqual(request['Capabilities'],
+                         ['CAPABILITY_NAMED_IAM', 'CAPABILITY_AUTO_EXPAND'])
         self.assertEqual(request['RoleARN'], current['roleArn'])
         self.assertEqual(request['Tags'], current['tags'])
         self.assertEqual(len([p for p in request['Parameters'] if 'ParameterValue' in p]), 3)
@@ -255,6 +265,28 @@ class OwnerParameterGuards(unittest.TestCase):
             changed = deepcopy(current)
             changed[target] = value
             with self.subTest(target=target), self.assertRaises(owner.OwnerReleaseError):
+                owner.owner_change_set_request(changed, run_id='12345', attempt='1')
+        changed = deepcopy(current)
+        changed['original']['Description'] = 'changed'
+        with self.assertRaisesRegex(owner.OwnerReleaseError,
+                                    'production_owner_deployed_template_changed'):
+            owner.owner_change_set_request(changed, run_id='12345', attempt='1')
+        changed = deepcopy(current)
+        changed['original']['Transform'] = 'AWS::LanguageExtensions'
+        with self.assertRaisesRegex(owner.OwnerReleaseError,
+                                    'production_owner_transform_invalid'):
+            owner.owner_change_set_request(changed, run_id='12345', attempt='1')
+        changed = deepcopy(current)
+        changed['original']['Description'] = 'x' * 51200
+        with patch.object(owner, 'APPROVED_ORIGINAL_SHA', sha(changed['original'])):
+            with self.assertRaisesRegex(owner.OwnerReleaseError,
+                                        'production_owner_template_body_too_large'):
+                owner.owner_change_set_request(changed, run_id='12345', attempt='1')
+        changed = deepcopy(current)
+        changed['original']['Description'] = {'not-json'}
+        with patch.object(owner, 'APPROVED_ORIGINAL_SHA', sha(changed['original'])):
+            with self.assertRaisesRegex(owner.OwnerReleaseError,
+                                        'production_owner_template_invalid'):
                 owner.owner_change_set_request(changed, run_id='12345', attempt='1')
 
     def test_postcheck_preserves_all_existing_physical_ids_and_closed_routes(self):
@@ -303,13 +335,15 @@ class OwnerParameterGuards(unittest.TestCase):
                 item['ParameterValue'] = owner.OVERRIDES[item['ParameterKey']]
         preview = {'Status': 'CREATE_COMPLETE', 'ExecutionStatus': 'AVAILABLE',
                    'StackId': stack_id, 'RoleARN': current['roleArn'],
+                   'Capabilities': ['CAPABILITY_NAMED_IAM', 'CAPABILITY_AUTO_EXPAND'],
                    'Parameters': expected, 'Changes': [
                        {'Type': 'Resource', 'ResourceChange': {'Action': 'Add',
                         'LogicalResourceId': name, 'ResourceType': kind,
                         'Replacement': 'False'}}
                        for name, kind in owner.OWNER_RESOURCES.items()]}
         owner.validate_owner_preview(preview, current, self.original, self.processed)
-        for target in ('template', 'parameter', 'inventory', 'stack'):
+        for target in ('template', 'parameter', 'inventory', 'stack',
+                       'capabilities', 'duplicate_capability'):
             changed = deepcopy(preview)
             original = deepcopy(self.original)
             if target == 'template':
@@ -318,6 +352,10 @@ class OwnerParameterGuards(unittest.TestCase):
                 changed['Parameters'][0]['ParameterValue'] = 'false'
             elif target == 'inventory':
                 changed['Changes'][0]['ResourceChange']['Action'] = 'Modify'
+            elif target == 'capabilities':
+                changed['Capabilities'] = ['CAPABILITY_NAMED_IAM']
+            elif target == 'duplicate_capability':
+                changed['Capabilities'].append('CAPABILITY_NAMED_IAM')
             else:
                 changed['StackId'] += 'other'
             with self.subTest(target=target), self.assertRaises(owner.OwnerReleaseError):
@@ -349,6 +387,7 @@ class OwnerParameterGuards(unittest.TestCase):
             def __init__(self):
                 self.calls = []
                 self.preview = deepcopy(preview)
+                self.original = deepcopy(current['original'])
             def create_change_set(self, **request):
                 self.calls.append('create')
                 return {'Id': change_set_arn}
@@ -363,7 +402,7 @@ class OwnerParameterGuards(unittest.TestCase):
                 return self.preview
             def get_template(self, **request):
                 self.calls.append('template')
-                return {'TemplateBody': current['original'] if
+                return {'TemplateBody': self.original if
                     request['TemplateStage'] == 'Original' else current['processed']}
             def delete_change_set(self, **request):
                 self.calls.append('delete')
@@ -383,6 +422,13 @@ class OwnerParameterGuards(unittest.TestCase):
         cf = CF()
         cf.preview['Changes'][0]['ResourceChange']['Action'] = 'Modify'
         with self.assertRaises(owner.OwnerReleaseError):
+            owner.run_owner_review(cf, preflight=preflight,
+                source_sha='a' * 40, run_id='12345', attempt='1', created_at=1000)
+        self.assertEqual(cf.calls[-1], 'delete')
+        cf = CF()
+        cf.original.pop('Transform')
+        with self.assertRaisesRegex(owner.OwnerReleaseError,
+                                    'production_owner_transform_invalid'):
             owner.run_owner_review(cf, preflight=preflight,
                 source_sha='a' * 40, run_id='12345', attempt='1', created_at=1000)
         self.assertEqual(cf.calls[-1], 'delete')
