@@ -1,7 +1,7 @@
 # THN production owner operator: parameter-only release
 
-Status: Template-body amendment drafted after the 2026-10-02 review failure;
-awaiting user review. The owner operation has not been executed in AWS.
+Status: Template-body amendment approved on 2026-10-02; the owner operation
+has not been executed in AWS.
 
 ## Evidence and purpose
 
