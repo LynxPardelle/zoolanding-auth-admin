@@ -51,9 +51,9 @@ def capture(session,selection,service,source_sha):
     item=session.client('dynamodb').get_item(TableName=table,Key={'pk':{'S':'SERVICE_BINDING#production#thn-journal-production-v2'},'sk':{'S':'REGISTRY#V2'}},ConsistentRead=True).get('Item')
     release.require(isinstance(item,dict) and item,'production_registry_prerequisite_missing')
     row={key:TypeDeserializer().deserialize(value) for key,value in item.items()}
-    # DynamoDB numeric schema counters are integers, never decimal strings.
-    for key in ('registryRevision','writerEpoch'):
-        from decimal import Decimal
+    # DynamoDB returns numeric schema fields as Decimal; the approved row hashes integers.
+    from decimal import Decimal
+    for key in ('schemaVersion','registryRevision','writerEpoch'):
         if isinstance(row.get(key),Decimal) and row[key]==int(row[key]):row[key]=int(row[key])
     verify_registry(row)
     release.require(release.sha(row)==selection['registrySha256'],'production_registry_prerequisite_changed')
