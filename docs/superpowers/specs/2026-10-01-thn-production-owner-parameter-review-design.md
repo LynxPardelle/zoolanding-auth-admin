@@ -1,6 +1,7 @@
 # THN production owner operator: parameter-only release
 
-Status: design approved for documentation; implementation and AWS review pending.
+Status: IAM prerequisite added after read-only preflight; revised written design
+awaits user review. No implementation or AWS review has run for this change.
 
 ## Evidence and purpose
 
@@ -28,6 +29,55 @@ parameter-only change sets. Its caution applies to
 `AWS::LanguageExtensions`; the deployed Auth template has only
 `AWS::Serverless-2016-10-31`.
 
+The live IAM preflight found a separate blocker in the Auth GitHub deployment
+role, `zoolanding-auth-admin-production-deploy`. CloudFormation's execution
+role has `allowed` for all 97 required native action/resource pairs for the ten
+owner additions, but the GitHub role returns `implicitDeny` for several reads
+needed to establish and verify the owner baseline. Launching an Auth review
+before fixing these exact reads would produce another predictable failed run.
+
+## Prerequisite: scoped deployment-role reads
+
+First add a dedicated `auth-owner-read-patch` operation to the protected
+production deployment-identities release in `zoolandingpage-aws-infra`. Its
+candidate is derived from the deployed identities template and may modify only
+the `PolicyDocument` of `AuthGithubReleasePolicy`, attached to
+`zoolanding-auth-admin-production-deploy`. Add only these reads, with exact
+resource ARNs in account `765932874577` and region `us-east-1`:
+
+- `iam:ListMFADevices` on `arn:aws:iam::765932874577:user/Hector-admin`.
+- `cognito-idp:ListUsersInGroup` on the production user pool
+  `arn:aws:cognito-idp:us-east-1:765932874577:userpool/us-east-1_c1QxYjOiI`.
+- `iam:GetRole`, `iam:GetRolePolicy`, `iam:ListRolePolicies`, and
+  `iam:ListAttachedRolePolicies` on the owner human role
+  `arn:aws:iam::765932874577:role/zoolanding-thn-owner-production-operator`
+  and owner Lambda role
+  `arn:aws:iam::765932874577:role/zoolanding-auth-admin-prod-ThnProductionOwnerOperatorV2Role`.
+- `lambda:GetAlias` and `lambda:GetFunctionUrlConfig` on the exact owner
+  function `arn:aws:lambda:us-east-1:765932874577:function:zoolanding-auth-admin-prod-ThnProductionOwnerOperatorV2`
+  and its `production` qualified ARN, only as required by the actual API calls.
+- `cloudformation:ListChangeSets` on the Auth stack
+  `arn:aws:cloudformation:us-east-1:765932874577:stack/zoolanding-auth-admin-prod/*`.
+
+The implementation must validate AWS's resource-level authorization semantics
+for each action before finalizing the statements. If an action cannot be
+restricted to the stated resource, do not silently replace it with `*`;
+rework the preflight or bring that exception back for review. Preserve every
+existing statement, condition, attached role, and resource in the policy.
+Do not add write actions, Cognito mutation, Lambda invocation, or human-role
+permissions. No owner resource or route is created by this prerequisite.
+
+The new identities scope must pass all workflow, shared operation, source
+package, and inventory allowlists. A local replay with captured AWS responses
+must reach the barrier immediately before its first write. Its AWS `review`
+creates and inspects a temporary change set; accept exactly one `Modify`
+without replacement of `AuthGithubReleasePolicy` and no other resource change.
+Show the inventory and digest, then require separate authorization for
+`execute`. After execution, verify the policy document and repeat
+`SimulatePrincipalPolicy` on every previously denied exact action/resource
+pair. Require all of them to be `allowed` before dispatching the Auth owner
+review. Stop on drift or an unexpected inventory instead of retrying an Action.
+
 ## Decision and boundaries
 
 Add a dedicated manual production workflow and a small operator for this one
@@ -50,8 +100,10 @@ Every other parameter must use its previous value, including masked NoEcho
 parameters. `EnableThnAuthAdminV2` remains `false`. The workflow must fail
 before creating the change set if the stack, deployed Original and Processed
 templates, parameter set, production identity, MFA device, protected branch,
-IAM trust, or effective permissions differ from the reviewed baseline. It must
-also require no competing change set or in-progress stack operation.
+IAM trust, or effective permissions differ from the reviewed baseline. The
+prerequisite read policy must already be deployed and every required read must
+simulate as `allowed`. It must also require no competing change set or
+in-progress stack operation.
 
 ## Inventory and approval
 
@@ -88,8 +140,13 @@ Never auto-delete retained resources or retry the operation blindly.
 ## Checks before the first Action
 
 Use AWS CLI to refresh the protected stack, Original and Processed templates,
-parameters, resources, role trust and IAM simulations. Test the three parameter
-overrides against the deployed template locally; translate the SAM template
+parameters, resources, role trust and IAM simulations. The current native
+provider-schema selection yielded 97/97 allowed pairs for the CloudFormation
+execution role; repeat that proof if the template or execution role changes.
+Confirm the identities stack and deployed `AuthGithubReleasePolicy` before the
+IAM patch, and simulate its newly allowed reads after the separately approved
+execution. Test the three parameter overrides against the deployed template
+locally; translate the SAM template
 with the pinned release tooling and compare allowed native resource names.
 Exercise offline tests for stale source/baseline, changed or extra parameter,
 missing MFA, wrong principal, unrelated native change, replacement, expired
@@ -97,9 +154,11 @@ record, and post-execution identity drift. Run the relevant Auth tests and
 `actionlint` when available. A local replay must reach a barrier before
 `CreateChangeSet`, using captured current AWS responses.
 
-Promote code through `dev → test → main` with exact selectors and green CI,
-without running this manual operation automatically. The eventual `review`
-and `execute` each require their own authorization under `AGENTS.md`.
+Promote the identities patch code through `dev → test → main` with exact
+selectors and green CI, without invoking AWS automatically. Review and execute
+the identities patch only with separate approvals. Then promote the Auth owner
+operation code through the same branch sequence. Its eventual `review` and
+`execute` each require their own authorization under `AGENTS.md`.
 
 ## Alternatives and acceptance
 
