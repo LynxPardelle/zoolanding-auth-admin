@@ -1,7 +1,7 @@
 # THN production owner operator: parameter-only release
 
-Status: IAM prerequisite added after read-only preflight; revised written design
-awaits user review. No implementation or AWS review has run for this change.
+Status: Revised design approved by the user. Local implementation is in progress;
+the owner operation has not run in AWS.
 
 ## Evidence and purpose
 
@@ -103,7 +103,9 @@ templates, parameter set, production identity, MFA device, protected branch,
 IAM trust, or effective permissions differ from the reviewed baseline. The
 prerequisite read policy must already be deployed and every required read must
 simulate as `allowed`. It must also require no competing change set or
-in-progress stack operation.
+in-progress stack operation. The owner Lambda's exact deployed, versioned S3
+package must still exist, be encrypted, and be readable by the deployment role;
+its metadata is sealed with the review and rechecked before execution.
 
 ## Inventory and approval
 
