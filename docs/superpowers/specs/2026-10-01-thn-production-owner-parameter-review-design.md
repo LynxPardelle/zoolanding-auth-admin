@@ -1,7 +1,7 @@
 # THN production owner operator: parameter-only release
 
-Status: Revised design approved by the user. Local implementation is in progress;
-the owner operation has not run in AWS.
+Status: Template-body amendment drafted after the 2026-10-02 review failure;
+awaiting user review. The owner operation has not been executed in AWS.
 
 ## Evidence and purpose
 
@@ -24,26 +24,45 @@ role with MFA present and age 120 seconds. The role does not exist yet.
 The current `state` workflow builds and uploads packages for every SAM
 function. That can change existing function code coordinates during an owner
 operator review even if their bytes are identical. This operation instead
-reuses the deployed template. AWS documents `UsePreviousTemplate=true` for
-parameter-only change sets. Its caution applies to
-`AWS::LanguageExtensions`; the deployed Auth template has only
-`AWS::Serverless-2016-10-31`.
+reuses the exact deployed Original template and package coordinates. The
+deployed Auth template has only `AWS::Serverless-2016-10-31`.
 
-The live IAM preflight found a separate blocker in the Auth GitHub deployment
-role, `zoolanding-auth-admin-production-deploy`. CloudFormation's execution
-role has `allowed` for all 97 required native action/resource pairs for the ten
-owner additions, but the GitHub role returns `implicitDeny` for several reads
-needed to establish and verify the owner baseline. Launching an Auth review
-before fixing these exact reads would produce another predictable failed run.
+The first protected owner review on MAIN
+`7123cd8e4c222343bd6a09d7d999583334b534cf`, run
+[#37071052433](https://github.com/LynxPardelle/zoolanding-auth-admin/actions/runs/37071052433),
+used `UsePreviousTemplate=true`. It passed source validation, OIDC assumption,
+IAM and stack preflight, and created a change set. The preview guard then
+reported `production_owner_transform_invalid` while comparing its Original and
+Processed templates. The guard deleted that change set; the stack remains
+protected and `UPDATE_COMPLETE` with 37 resources, no pending change set, and
+the owner gate still off. Fresh `GetTemplate` calls confirm the stack Original
+has the single SAM transform and Processed has none. Therefore the mismatch
+was in the change-set view. Reuse of the processed template is the likely
+cause, but the failed run did not retain the two change-set template bodies,
+so the exact returned shape is unconfirmed. Do not retry the same request.
 
-## Prerequisite: scoped deployment-role reads
+The exact deployed Original template serializes to 45,895 UTF-8 bytes, below
+the 51,200-byte `TemplateBody` API limit. A read-only AWS `ValidateTemplate`
+call accepted it with 15 parameters and reported `CAPABILITY_AUTO_EXPAND`.
+The existing Auth `state` release uses both `CAPABILITY_NAMED_IAM` and
+`CAPABILITY_AUTO_EXPAND` for its SAM change set. This amendment keeps the
+original source under the same CloudFormation stack without a package or
+template upload.
 
-First add a dedicated `auth-owner-read-patch` operation to the protected
-production deployment-identities release in `zoolandingpage-aws-infra`. Its
-candidate is derived from the deployed identities template and may modify only
-the `PolicyDocument` of `AuthGithubReleasePolicy`, attached to
-`zoolanding-auth-admin-production-deploy`. Add only these reads, with exact
-resource ARNs in account `765932874577` and region `us-east-1`:
+An earlier IAM preflight found a separate read blocker in the Auth GitHub
+deployment role, `zoolanding-auth-admin-production-deploy`. Its scoped read
+policy has since been applied. The 2026-10-02 preflight reconfirmed `allowed`
+for all 15 required Auth deploy-role reads and all 97 native action/resource
+pairs of the CloudFormation execution role. The protected review passed this
+IAM boundary; its failure occurred later at the change-set template comparison.
+
+## Completed prerequisite: scoped deployment-role reads
+
+The protected `auth-owner-read-patch` operation in `zoolandingpage-aws-infra`
+was reviewed and executed separately. It modified only the `PolicyDocument`
+of `AuthGithubReleasePolicy`, attached to
+`zoolanding-auth-admin-production-deploy`, with these scoped reads in account
+`765932874577` and region `us-east-1`:
 
 - `iam:ListMFADevices` on `arn:aws:iam::765932874577:user/Hector-admin`.
 - `cognito-idp:ListUsersInGroup` on the production user pool
@@ -59,38 +78,31 @@ resource ARNs in account `765932874577` and region `us-east-1`:
 - `cloudformation:ListChangeSets` on the Auth stack
   `arn:aws:cloudformation:us-east-1:765932874577:stack/zoolanding-auth-admin-prod/*`.
 
-The implementation must validate AWS's resource-level authorization semantics
-for each action before finalizing the statements. If an action cannot be
-restricted to the stated resource, do not silently replace it with `*`;
-rework the preflight or bring that exception back for review. Preserve every
-existing statement, condition, attached role, and resource in the policy.
-Do not add write actions, Cognito mutation, Lambda invocation, or human-role
-permissions. No owner resource or route is created by this prerequisite.
-
-The new identities scope must pass all workflow, shared operation, source
-package, and inventory allowlists. A local replay with captured AWS responses
-must reach the barrier immediately before its first write. Its AWS `review`
-creates and inspects a temporary change set; accept exactly one `Modify`
-without replacement of `AuthGithubReleasePolicy` and no other resource change.
-Show the inventory and digest, then require separate authorization for
-`execute`. After execution, verify the policy document and repeat
-`SimulatePrincipalPolicy` on every previously denied exact action/resource
-pair. Require all of them to be `allowed` before dispatching the Auth owner
-review. Stop on drift or an unexpected inventory instead of retrying an Action.
+Its release passed the workflow and inventory allowlists and applied a single
+`Modify` without replacement. It added no write, Cognito mutation, Lambda
+invocation, or human-role permissions. The applied policy and all 15/15 exact
+read decisions were verified before the Auth owner review. Recheck this proof
+before a new review; do not redeploy the completed IAM prerequisite.
 
 ## Decision and boundaries
 
-Add a dedicated manual production workflow and a small operator for this one
-parameter-only transition. Keep the existing retained release path unchanged.
+The dedicated manual production workflow and small operator already exist for
+this parameter-only transition. Keep the retained release path unchanged.
 The workflow runs only from the exact current `main` SHA in the protected
 `production` Environment with the existing Auth OIDC deployment role. It has
 `review` and `execute` operations and no build, `sam package`, S3 package
 write, Cognito mutation, or owner enrollment step.
 
-Review calls `CreateChangeSet` on the existing Auth stack with
-`UsePreviousTemplate=true`, the current CloudFormation execution role,
-`CAPABILITY_NAMED_IAM`, and the current tags. It supplies exactly these three
-new values:
+Review calls `CreateChangeSet` on the existing Auth stack with `TemplateBody`
+containing a compact JSON serialization of the **freshly downloaded deployed
+Original template**, the current CloudFormation execution role, both
+`CAPABILITY_NAMED_IAM` and `CAPABILITY_AUTO_EXPAND`, and the current tags.
+The operator must reject a non-dictionary Original, a different transform,
+a changed pinned template hash, a body over 51,200 UTF-8 bytes, or a body whose
+parsed canonical hash differs from the downloaded Original before the first
+write. It must never use a local rebuild, a caller-provided template, or
+`UsePreviousTemplate` as a fallback. The request supplies exactly these three
+new parameter values:
 
 - `ProvisionThnProductionOwnerOperatorV2=true`
 - `ThnProductionOwnerOperatorGate=CONFIRMED_PRODUCTION_OWNER_OPERATOR`
@@ -110,7 +122,11 @@ its metadata is sealed with the review and rechecked before execution.
 ## Inventory and approval
 
 After creating the change set, read every page of the native change inventory
-and both change-set templates. Permit only `Add` without replacement for the
+and both change-set templates. Require the parsed change-set Original and
+Processed templates to match the canonical hashes of the deployed Original
+and Processed templates respectively. Report only their hashes and transform
+shapes in sanitized diagnostics if this comparison fails, then delete the
+change set. Permit only `Add` without replacement for the
 eight owner logical IDs already gated by
 `IsThnProductionOwnerOperatorV2Provisioned` and the SAM-generated owner
 function version and `production` alias. The complete allowed logical-ID set
@@ -144,30 +160,42 @@ Never auto-delete retained resources or retry the operation blindly.
 Use AWS CLI to refresh the protected stack, Original and Processed templates,
 parameters, resources, role trust and IAM simulations. The current native
 provider-schema selection yielded 97/97 allowed pairs for the CloudFormation
-execution role; repeat that proof if the template or execution role changes.
-Confirm the identities stack and deployed `AuthGithubReleasePolicy` before the
-IAM patch, and simulate its newly allowed reads after the separately approved
-execution. Test the three parameter overrides against the deployed template
-locally; translate the SAM template
+execution role and 15/15 Auth deploy-role reads; repeat that proof if the
+template or either role changes. Check the exact Original body size and run
+read-only `ValidateTemplate` against that body before the first Action.
+Confirm the identities stack and deployed `AuthGithubReleasePolicy` remain as
+reviewed, and simulate all 15 allowed reads. Test the three parameter overrides
+against the deployed template locally; translate the SAM template
 with the pinned release tooling and compare allowed native resource names.
 Exercise offline tests for stale source/baseline, changed or extra parameter,
 missing MFA, wrong principal, unrelated native change, replacement, expired
-record, and post-execution identity drift. Run the relevant Auth tests and
-`actionlint` when available. A local replay must reach a barrier before
-`CreateChangeSet`, using captured current AWS responses.
+record, and post-execution identity drift. Add a regression for a preview
+without the SAM transform, the observed failure class under
+`UsePreviousTemplate`. Assert that the new request contains only the exact
+Original `TemplateBody`, both capabilities,
+and the three overrides. Reject oversize bodies, unknown transforms, or
+changed canonical hashes. Replay the complete review path with the freshly
+captured AWS stack and template responses up to a barrier immediately before
+`CreateChangeSet`; replay both a matching preview and a preview whose Original
+lacks the SAM transform to prove cleanup and no execute. Run the relevant Auth
+tests and `actionlint` when available. After any code promotion, perform one newly
+authorized review; do not reuse the failed review run or its nonexistent digest.
 
-Promote the identities patch code through `dev → test → main` with exact
-selectors and green CI, without invoking AWS automatically. Review and execute
-the identities patch only with separate approvals. Then promote the Auth owner
-operation code through the same branch sequence. Its eventual `review` and
-`execute` each require their own authorization under `AGENTS.md`.
+The identities read patch and the first Auth owner operation have already been
+promoted through `dev → test → main` with exact selectors and green CI. Promote
+this amendment by the same branch sequence without invoking AWS automatically.
+Its new `review` and `execute` each require fresh authorization under
+`AGENTS.md`.
 
 ## Alternatives and acceptance
 
 The existing `state` release is unsuitable for this narrow transition because
-it repackages other functions. Direct CLI execution has no durable source,
-inventory, and digest guard. The dedicated parameter-only path minimizes the
-resources touched while keeping a reviewable release record.
+it repackages other functions. A private S3 `TemplateURL` would add an object
+write and another permission surface. Accepting the processed template as the
+new Original could change the stack's template provenance and future release
+behavior. Direct CLI execution has no durable source, inventory, and digest
+guard. The exact inline Original template keeps the release limited to the
+three parameter values and a reviewable resource inventory.
 
 The operation is accepted when its protected review shows only the intended
 owner additions, its separately approved execution preserves all existing
