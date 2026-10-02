@@ -11,6 +11,8 @@ import re
 import sys
 import time
 
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 from tools import thn_production_release as release
 from tools import thn_production_owner_parameter_release as owner
 from tools.run_thn_production_release import (
@@ -18,7 +20,6 @@ from tools.run_thn_production_release import (
 )
 
 
-ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / 'tools/production/thn-deployment-identities.json'
 DEPLOY_ROLE = 'zoolanding-auth-admin-production-deploy'
 EXECUTION_ROLE = 'zoolanding-deployer-auth-admin-production-cfn-exec'
