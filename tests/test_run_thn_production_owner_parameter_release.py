@@ -164,10 +164,12 @@ class OwnerDriverPreflightTests(unittest.TestCase):
         state = {'stackId': stack_id, 'original': {}, 'processed': {},
                  'resources': [], 'parameters': []}
         class CF:
-            available = False
+            change_status = None
             def list_change_sets(self, **request):
                 return {'Summaries': [{'ChangeSetId': 'other',
-                         'ExecutionStatus': 'AVAILABLE'}] if self.available else []}
+                         'Status': self.change_status[0],
+                         'ExecutionStatus': self.change_status[1]}]
+                         if self.change_status else []}
         class IAM:
             mfa = True
             def get_role(self, **request):
@@ -206,10 +208,20 @@ class OwnerDriverPreflightTests(unittest.TestCase):
              patch.object(driver, 'validate_github_trust'):
             result = driver.capture_owner_preflight(session)
             self.assertEqual(result[0]['stackId'], stack_id)
-            session.cf.available = True
+            for status in (('CREATE_COMPLETE', 'AVAILABLE'),
+                           ('CREATE_PENDING', 'UNAVAILABLE'),
+                           ('CREATE_IN_PROGRESS', 'UNAVAILABLE')):
+                session.cf.change_status = status
+                with self.subTest(status=status), self.assertRaises(owner.OwnerReleaseError):
+                    driver.capture_owner_preflight(session)
+            session.cf.change_status = ('CREATE_COMPLETE', 'AVAILABLE')
+            self.assertEqual(driver.capture_owner_preflight(
+                session, allowed_change_set_arn='other')[0]['stackId'], stack_id)
+            session.cf.change_status = ('CREATE_IN_PROGRESS', 'UNAVAILABLE')
             with self.assertRaises(owner.OwnerReleaseError):
-                driver.capture_owner_preflight(session)
-            session.cf.available = False
+                driver.capture_owner_preflight(session,
+                    allowed_change_set_arn='other')
+            session.cf.change_status = None
             session.iam.mfa = False
             with self.assertRaises(owner.OwnerReleaseError):
                 driver.capture_owner_preflight(session)

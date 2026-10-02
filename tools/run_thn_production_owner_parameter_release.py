@@ -27,7 +27,7 @@ HUMAN_ROLE_ARN = ('arn:aws:iam::765932874577:role/'
 POOL_ID = 'us-east-1_c1QxYjOiI'
 
 
-def _available_change_sets(cf, stack_id):
+def _change_set_summaries(cf, stack_id):
     result = []
     token = None
     seen = set()
@@ -36,9 +36,13 @@ def _available_change_sets(cf, stack_id):
         if token:
             request['NextToken'] = token
         page = cf.list_change_sets(**request)
-        result.extend(item.get('ChangeSetId') for item in
-                      page.get('Summaries', []) if
-                      item.get('ExecutionStatus') == 'AVAILABLE')
+        summaries = page.get('Summaries')
+        if not isinstance(summaries, list) or not all(
+                isinstance(item, dict) and
+                isinstance(item.get('ChangeSetId'), str) and
+                item['ChangeSetId'] for item in summaries):
+            raise owner.OwnerReleaseError('production_owner_change_set_list_invalid')
+        result.extend(summaries)
         token = page.get('NextToken')
         if not token:
             return result
@@ -127,8 +131,13 @@ def capture_owner_preflight(session, *, allowed_change_set_arn=None):
     state['processed'] = owner.parse_owner_template(state['processed'])
     owner.assert_deployed_template_fingerprints(state['original'], state['processed'])
     owner.owner_change_set_request(state, run_id='1', attempt='1')
-    available = _available_change_sets(cf, state['stackId'])
-    if available != ([allowed_change_set_arn] if allowed_change_set_arn else []):
+    summaries = _change_set_summaries(cf, state['stackId'])
+    expected = ([{'ChangeSetId': allowed_change_set_arn,
+                  'Status': 'CREATE_COMPLETE', 'ExecutionStatus': 'AVAILABLE'}]
+                if allowed_change_set_arn else [])
+    actual = [{key: item.get(key) for key in
+               ('ChangeSetId', 'Status', 'ExecutionStatus')} for item in summaries]
+    if actual != expected:
         raise owner.OwnerReleaseError('production_owner_competing_change_set')
     iam = session.client('iam')
     role = iam.get_role(RoleName=DEPLOY_ROLE)['Role']
