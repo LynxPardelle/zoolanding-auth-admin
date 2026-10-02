@@ -1,0 +1,132 @@
+name: THN Production Owner Operator Parameter Review
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        type: choice
+        required: true
+        options: [review, execute]
+      source_sha:
+        type: string
+        required: true
+      review_run_id:
+        type: string
+        required: false
+      approved_digest:
+        type: string
+        required: false
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: thn-production-retained-auth
+  cancel-in-progress: false
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      SOURCE_SHA: ${{ inputs.source_sha }}
+      OPERATION: ${{ inputs.operation }}
+      REVIEW_RUN_ID: ${{ inputs.review_run_id }}
+      APPROVED_DIGEST: ${{ inputs.approved_digest }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+      - name: Require exact main and reviewed inputs without AWS
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/main
+          test "$GITHUB_EVENT_NAME" = workflow_dispatch
+          python tools/run_thn_production_owner_parameter_release.py validate --source-sha "$SOURCE_SHA"
+          if [[ "$OPERATION" == review ]]; then
+            test -z "$REVIEW_RUN_ID"
+            test -z "$APPROVED_DIGEST"
+          else
+            [[ "$REVIEW_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+            [[ "$APPROVED_DIGEST" =~ ^[a-f0-9]{64}$ ]]
+          fi
+      - name: Run offline owner guards
+        run: |
+          python -m unittest tests.test_thn_production_owner_parameter_release tests.test_run_thn_production_owner_parameter_release
+  release:
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    environment: production
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    env:
+      SOURCE_SHA: ${{ inputs.source_sha }}
+      OPERATION: ${{ inputs.operation }}
+      REVIEW_RUN_ID: ${{ inputs.review_run_id }}
+      APPROVED_DIGEST: ${{ inputs.approved_digest }}
+      AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+      GH_TOKEN: ${{ github.token }}
+      AWS_EC2_METADATA_DISABLED: 'true'
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+      - name: Install declared release dependencies
+        run: python -m pip install --disable-pip-version-check -r requirements-tools.txt
+      - name: Require exact deployment identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$AWS_ROLE_ARN" = arn:aws:iam::765932874577:role/zoolanding-auth-admin-production-deploy
+      - name: Verify reviewed run and download sealed record
+        if: inputs.operation == 'execute'
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$REVIEW_RUN_ID" > "$RUNNER_TEMP/owner-review-run.json"
+          python - <<'PY'
+          import json, os, pathlib
+          value = json.loads((pathlib.Path(os.environ['RUNNER_TEMP']) / 'owner-review-run.json').read_text())
+          assert value['event'] == 'workflow_dispatch'
+          assert value['head_branch'] == 'main'
+          assert value['head_sha'] == os.environ['SOURCE_SHA']
+          assert value['path'] == '.github/workflows/deploy-thn-production-owner-operator.yml'
+          assert value['status'] == 'completed' and value['conclusion'] == 'success'
+          PY
+          gh run download "$REVIEW_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "thn-production-auth-owner-review-$REVIEW_RUN_ID" --dir owner-review
+          test "$(find owner-review -type f | wc -l)" = 1
+          cp owner-review/production-owner-review.json production-owner-review.json
+      - name: Recheck exact main immediately before credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tools/run_thn_production_owner_parameter_release.py validate --source-sha "$SOURCE_SHA"
+      - name: Assume selected production deployment identity
+        uses: aws-actions/configure-aws-credentials@517a711dbcd0e402f90c77e7e2f81e849156e31d # v6
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+          allowed-account-ids: '765932874577'
+      - name: Review or execute the exact owner transition
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tools/run_thn_production_owner_parameter_release.py "$OPERATION" --source-sha "$SOURCE_SHA" --review-run-id "$REVIEW_RUN_ID" --approved-digest "$APPROVED_DIGEST" --record production-owner-review.json
+      - name: Transport sanitized review and exact digest
+        if: inputs.operation == 'review'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: thn-production-auth-owner-review-${{ github.run_id }}
+          path: production-owner-review.json
+          retention-days: 30
+          if-no-files-found: error
