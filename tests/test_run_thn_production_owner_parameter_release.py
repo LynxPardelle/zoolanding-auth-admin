@@ -2,6 +2,8 @@
 import unittest
 from unittest.mock import patch
 import tempfile
+import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -10,6 +12,15 @@ from tools import thn_production_owner_parameter_release as owner
 
 
 class OwnerDriverPreflightTests(unittest.TestCase):
+    def test_direct_workflow_entrypoint_imports_tools_without_pythonpath(self):
+        root = Path(__file__).resolve().parents[1]
+        result = subprocess.run(
+            [sys.executable, '-I', str(root / 'tools' /
+             'run_thn_production_owner_parameter_release.py'), '--help'],
+            cwd=root, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('review', result.stdout)
+
     def test_owner_package_must_match_deployed_version_and_be_readable(self):
         source = {'Bucket': 'zlp-thn-production-releases-765932874577-us-east-1',
                   'Key': 'thn/production/auth/source/packages/object',
